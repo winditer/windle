@@ -6,6 +6,35 @@ macOS 系统清理与维护工具。基于 **React + Tauri v2** 构建，帮助�
 
 界面支持 **中文 / English** 实时切换。
 
+## 界面预览
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/dashboard.png" alt="仪表盘"><br><sub>仪表盘</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/deep-clean.png" alt="深度清理"><br><sub>深度清理</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/smart-uninstall.png" alt="智能卸载"><br><sub>智能卸载</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/disk-analyzer.png" alt="磁盘分析"><br><sub>磁盘分析</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/system-optimize.png" alt="系统优化"><br><sub>系统优化</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/live-monitor.png" alt="实时监控"><br><sub>实时监控</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/project-purge.png" alt="项目清理"><br><sub>项目清理</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/installer-cleanup.png" alt="安装包清理"><br><sub>安装包清理</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/docker-cleanup.png" alt="容器清理"><br><sub>容器清理</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/ai-agent-cleanup.png" alt="AI Agent 清理"><br><sub>AI Agent 清理</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/menubar-quick-clean.png" alt="菜单栏 · 立即清理"><br><sub>菜单栏 · 立即清理</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/menubar-status.png" alt="菜单栏 · 系统状态"><br><sub>菜单栏 · 系统状态</sub></td>
+  </tr>
+</table>
+
 ## 功能模块
 
 | 模块 | 说明 |
