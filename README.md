@@ -117,3 +117,7 @@ src-tauri/           Tauri / Rust 后端
 ## 更新日志
 
 见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+[MIT](LICENSE)

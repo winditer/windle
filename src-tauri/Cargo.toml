@@ -2,6 +2,7 @@
 name = "windle"
 version = "0.4.0"
 description = "Windle — macOS system maintenance toolkit"
+license = "MIT"
 authors = ["Windle"]
 edition = "2021"
 rust-version = "1.77.2"
