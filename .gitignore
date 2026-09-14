@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# Local QA artifacts (screenshots, automation outputs)
+.qa/
+
+# Qoder tooling
+.qoder/
+
+# Skill-generated planning docs
+docs/superpowers/
+
+# Packaged release images
+*.dmg

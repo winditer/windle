@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the generated bundle Info.plist by tauri-build. Keys that
+	     Tauri already derives from tauri.conf.json (name, version, identifier,
+	     icon) are intentionally omitted. -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+
+	<!-- Windle has no document UI and should not restore windows on relaunch. -->
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+
+	<!-- Follow the system appearance so the CSS media query matches the OS. -->
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
+
+	<key>NSHighResolutionCapable</key>
+	<true/>
+
+	<!-- Purpose strings shown when macOS prompts for access. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Windle needs access to your Desktop to find installers and large files you can remove.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Windle needs access to your Documents to analyze disk usage and find build artifacts.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Windle scans your Downloads folder for old disk images and installer packages.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Windle reports disk usage for external drives you have connected.</string>
+	<key>NSSystemAdministrationUsageDescription</key>
+	<string>Windle needs administrator access to run system maintenance tasks and remove protected files.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Windle uses Finder to move items to the Trash and reveal files.</string>
+</dict>
+</plist>
