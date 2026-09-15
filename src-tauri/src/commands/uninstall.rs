@@ -110,7 +110,8 @@ pub async fn build_uninstall_plan(app_id: String) -> Result<UninstallPlan> {
     Ok(plan_for(app))
 }
 
-/// Execute a plan. `paths` lets the user opt out of individual leftovers.
+/// Execute a plan. `paths` names the leftovers to take with the bundle — the
+/// bundle itself is always removed.
 #[tauri::command]
 pub async fn uninstall_app(app_id: String, paths: Vec<String>) -> Result<CleanOutcome> {
     let app = find_app(&app_id)?;
@@ -122,32 +123,13 @@ pub async fn uninstall_app(app_id: String, paths: Vec<String>) -> Result<CleanOu
     // Rebuild the plan and only act on paths it actually contains, so a stale
     // or tampered request cannot turn into an arbitrary delete.
     let plan = plan_for(app);
-    let allowed: Vec<&str> = std::iter::once(plan.app.path.as_str())
-        .chain(plan.leftovers.iter().map(|leftover| leftover.path.as_str()))
-        .collect();
-
-    let requested: Vec<String> = if paths.is_empty() {
-        allowed.iter().map(|path| path.to_string()).collect()
-    } else {
-        paths
-    };
+    let (ordered, rejected) = requested_paths(&plan, paths);
 
     let mut outcome = CleanOutcome::default();
 
-    // Leftovers first: if the bundle goes last, a failure part-way through
-    // still leaves the app visible in Launchpad rather than half-gone.
-    let mut ordered: Vec<String> = requested
-        .into_iter()
-        .filter(|path| {
-            if allowed.contains(&path.as_str()) {
-                true
-            } else {
-                outcome.fail(path.clone(), "not part of this uninstall plan");
-                false
-            }
-        })
-        .collect();
-    ordered.sort_by_key(|path| path == &plan.app.path);
+    for path in rejected {
+        outcome.fail(path, "not part of this uninstall plan");
+    }
 
     for path in ordered {
         match fs_ops::remove(Path::new(&path), RemoveMode::Trash) {
@@ -159,6 +141,38 @@ pub async fn uninstall_app(app_id: String, paths: Vec<String>) -> Result<CleanOu
     history::record_outcome(history::Operation::Uninstall, &outcome);
 
     Ok(outcome)
+}
+
+/// Resolve a removal request against `plan`: the requested leftovers plus the
+/// bundle itself, which is never optional — a request that only lists
+/// leftovers must not leave the app behind. Leftovers are ordered first so an
+/// interrupted run still leaves the app visible in Launchpad rather than
+/// half-gone. Requested paths the plan does not cover are returned separately,
+/// to be reported as failures instead of removed.
+fn requested_paths(plan: &UninstallPlan, requested: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let allowed: Vec<&str> = std::iter::once(plan.app.path.as_str())
+        .chain(plan.leftovers.iter().map(|leftover| leftover.path.as_str()))
+        .collect();
+
+    let mut rejected = Vec::new();
+    let mut selected: Vec<String> = requested
+        .into_iter()
+        .filter(|path| {
+            if allowed.contains(&path.as_str()) {
+                true
+            } else {
+                rejected.push(path.clone());
+                false
+            }
+        })
+        .collect();
+
+    if !selected.iter().any(|path| path == &plan.app.path) {
+        selected.push(plan.app.path.clone());
+    }
+
+    selected.sort_by_key(|path| path == &plan.app.path);
+    (selected, rejected)
 }
 
 /// Leftovers whose owning app is already gone.
@@ -582,6 +596,68 @@ mod tests {
         assert_eq!(bundle_id_from_leftover("Firefox"), None);
         assert_eq!(bundle_id_from_leftover("my.notes"), None);
         assert_eq!(bundle_id_from_leftover("Backup.2024.zip"), None);
+    }
+
+    fn plan_fixture() -> UninstallPlan {
+        UninstallPlan {
+            app: app_fixture(),
+            leftovers: vec![AppLeftover {
+                path: "/Users/test/Library/Preferences/com.acme.Acme.plist".into(),
+                kind: LeftoverKind::Preferences,
+                size: 100,
+                risk: RiskLevel::Safe,
+            }],
+            total_size: 1_100,
+            requires_elevation: false,
+        }
+    }
+
+    #[test]
+    fn the_bundle_is_removed_even_when_only_leftovers_are_requested() {
+        let plan = plan_fixture();
+
+        let (selected, rejected) = requested_paths(
+            &plan,
+            vec!["/Users/test/Library/Preferences/com.acme.Acme.plist".into()],
+        );
+
+        assert!(rejected.is_empty());
+        assert_eq!(
+            selected,
+            vec![
+                "/Users/test/Library/Preferences/com.acme.Acme.plist".to_string(),
+                plan.app.path.clone(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_request_still_removes_the_bundle() {
+        let plan = plan_fixture();
+
+        let (selected, rejected) = requested_paths(&plan, vec![]);
+
+        assert!(rejected.is_empty());
+        assert_eq!(selected, vec![plan.app.path.clone()]);
+    }
+
+    #[test]
+    fn the_bundle_is_not_removed_twice() {
+        let plan = plan_fixture();
+
+        let (selected, _) = requested_paths(&plan, vec![plan.app.path.clone()]);
+
+        assert_eq!(selected, vec![plan.app.path.clone()]);
+    }
+
+    #[test]
+    fn paths_outside_the_plan_are_rejected() {
+        let plan = plan_fixture();
+
+        let (selected, rejected) = requested_paths(&plan, vec!["/etc/hosts".into()]);
+
+        assert_eq!(rejected, vec!["/etc/hosts".to_string()]);
+        assert_eq!(selected, vec![plan.app.path.clone()]);
     }
 
     #[test]

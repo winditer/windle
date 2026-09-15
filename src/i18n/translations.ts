@@ -276,6 +276,7 @@ const zhCN = {
     "uninstall.confirmMsg": "将移除 {bytes}：应用包加上 {count} 个残留项目。",
     "uninstall.remote": "远程",
     "uninstall.localOnly": "仅本地",
+    "uninstall.partial": "{name} 未能完全移除 — {failed} 项未删除",
 
     // Disk Analyzer
     "analyzer.title": "磁盘分析",
@@ -827,6 +828,7 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "uninstall.confirmMsg": "{bytes} will be removed: the app bundle plus {count} leftover items.",
     "uninstall.remote": "Remote",
     "uninstall.localOnly": "Local only",
+    "uninstall.partial": "{name} was not fully removed — {failed} item(s) failed",
 
     // Disk Analyzer
     "analyzer.title": "Disk Analyzer",

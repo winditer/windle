@@ -78,9 +78,12 @@ export function SmartUninstall() {
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [deselected, setDeselected] = useState<Record<string, Set<string>>>({});
   const [pendingApp, setPendingApp] = useState<InstalledApp | null>(null);
-  const [lastFreed, setLastFreed] = useState<{ name: string; bytes: number } | null>(
-    null,
-  );
+  const [lastFreed, setLastFreed] = useState<{
+    name: string;
+    bytes: number;
+    failed: number;
+    reason: string;
+  } | null>(null);
   const [appList, setAppList] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -188,18 +191,36 @@ export function SmartUninstall() {
     const app = pendingApp;
     if (!app) return;
 
-    const bytes = planSize(app);
-    const paths = keptLeftovers(app).map((leftover) => leftover.path);
+    // The bundle always goes; the checkboxes only opt leftovers out.
+    const paths = [
+      app.path,
+      ...keptLeftovers(app).map((leftover) => leftover.path),
+    ];
     setPendingApp(null);
     setModuleStatus("uninstall", "running");
 
     try {
-      await uninstallApp(app.id, paths);
-      setRemovedIds((current) => new Set(current).add(app.id));
+      const outcome = await uninstallApp(app.id, paths);
+      const bundleRemoved = outcome.removedPaths.includes(app.path);
+      if (bundleRemoved) {
+        setRemovedIds((current) => new Set(current).add(app.id));
+      }
       setExpandedId(null);
-      addFreedBytes(bytes);
-      setLastFreed({ name: app.name, bytes });
-      setModuleStatus("uninstall", "done");
+      // The plan is stale now — a retry must not re-offer paths already gone.
+      setPlans((current) => {
+        if (!(app.id in current)) return current;
+        const next = { ...current };
+        delete next[app.id];
+        return next;
+      });
+      addFreedBytes(outcome.freedBytes);
+      setLastFreed({
+        name: app.name,
+        bytes: outcome.freedBytes,
+        failed: outcome.failedPaths.length,
+        reason: outcome.failedPaths[0]?.reason ?? "",
+      });
+      setModuleStatus("uninstall", bundleRemoved ? "done" : "error");
     } catch (err) {
       console.error("[SmartUninstall] uninstallApp failed:", err);
       setModuleStatus("uninstall", "error");
@@ -285,19 +306,39 @@ export function SmartUninstall() {
         </div>
       </div>
 
-      {/* ------------------------------- Success ---------------------------- */}
-      {status === "done" && lastFreed && (
-        <Card className="border-success/30 bg-success/8">
+      {/* ------------------------------- Outcome ---------------------------- */}
+      {lastFreed && (
+        <Card
+          className={cn(
+            "border-success/30 bg-success/8",
+            lastFreed.failed > 0 && "border-warning/40 bg-warning/8",
+          )}
+        >
           <CardContent className="flex items-center gap-3.5 pt-5">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-success/15 text-success">
+            <span
+              className={cn(
+                "flex size-10 items-center justify-center rounded-xl bg-success/15 text-success",
+                lastFreed.failed > 0 && "bg-warning/15 text-warning",
+              )}
+            >
               <Sparkles className="size-5" strokeWidth={1.9} />
             </span>
             <div>
               <p className="text-[14px] font-semibold tracking-tight">
-                {t("uninstall.removed", { name: lastFreed.name, bytes: formatBytes(lastFreed.bytes) })}
+                {lastFreed.failed > 0
+                  ? t("uninstall.partial", {
+                      name: lastFreed.name,
+                      failed: lastFreed.failed,
+                    })
+                  : t("uninstall.removed", {
+                      name: lastFreed.name,
+                      bytes: formatBytes(lastFreed.bytes),
+                    })}
               </p>
               <p className="text-[12.5px] text-muted-foreground">
-                {t("uninstall.removedDetail")}
+                {lastFreed.failed > 0
+                  ? lastFreed.reason
+                  : t("uninstall.removedDetail")}
               </p>
             </div>
           </CardContent>
