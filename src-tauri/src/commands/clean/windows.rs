@@ -810,7 +810,7 @@ mod tests {
         std::fs::create_dir_all(root.join("Editor/Other")).unwrap();
         std::fs::write(root.join("Editor/Other/Cache"), b"not a directory").unwrap();
 
-        let mut found = app_data_junk(&root, CACHE_DIR_NAMES);
+        let mut found = app_data_junk(&root.join("Editor"), CACHE_DIR_NAMES);
         found.sort();
 
         assert_eq!(

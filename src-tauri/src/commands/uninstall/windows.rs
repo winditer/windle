@@ -1150,10 +1150,10 @@ mod tests {
             Some(false)
         );
 
-        let probe = permissions::expand("%SystemRoot%").join(r"System32");
+        let probe = permissions::expand("%SystemRoot%").join(r"System32\cmd.exe");
         assert_eq!(
             uninstaller_presence(&probe.to_string_lossy()),
-            Some(probe.is_dir())
+            Some(probe.is_file())
         );
     }
 

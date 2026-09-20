@@ -532,8 +532,7 @@ mod tests {
 
     #[test]
     fn children_of_skips_small_entries_and_missing_roots() {
-        let root = PathBuf::from("/tmp").join(format!("windle-clean-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+        let root = crate::utils::test_support::scratch("clean-small");
         std::fs::create_dir_all(root.join("big")).unwrap();
         std::fs::write(root.join("big/blob.bin"), vec![0u8; MIN_ITEM_SIZE as usize + 1]).unwrap();
         std::fs::write(root.join("tiny.bin"), b"nope").unwrap();
@@ -586,8 +585,7 @@ mod tests {
 
     #[test]
     fn children_of_tags_items_with_the_requested_group() {
-        let root = PathBuf::from("/tmp").join(format!("windle-clean-group-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+        let root = crate::utils::test_support::scratch("clean-group");
         std::fs::create_dir_all(root.join("Reports")).unwrap();
         std::fs::write(root.join("Reports/panic.log"), vec![0u8; MIN_ITEM_SIZE as usize + 1]).unwrap();
 
