@@ -2,7 +2,7 @@ import { Globe, PanelLeftClose, PanelLeftOpen, ShieldAlert } from "lucide-react"
 import { NAV_ITEMS } from "@/lib/navigation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { cn, formatBytes } from "@/lib/utils";
-import { useAppStore } from "@/stores/appStore";
+import { selectIsWindows, useAppStore } from "@/stores/appStore";
 
 export function Sidebar() {
   const activeModule = useAppStore((state) => state.activeModule);
@@ -11,6 +11,7 @@ export function Sidebar() {
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const freedThisSession = useAppStore((state) => state.freedThisSession);
   const fullDiskAccess = useAppStore((state) => state.permissions.fullDiskAccess);
+  const isWindows = useAppStore(selectIsWindows);
   const { t, lang, toggleLang } = useTranslation();
 
   return (
@@ -21,9 +22,14 @@ export function Sidebar() {
       )}
     >
       {/* Traffic lights live here, so the whole strip is a drag handle. */}
-      <div className="drag-region flex h-[52px] items-center justify-between px-4 pt-1">
+      <div
+        {...(isWindows ? { "data-tauri-drag-region": "deep" } : {})}
+        className="drag-region flex h-[52px] items-center justify-between px-4 pt-1"
+      >
         {!collapsed ? (
-          <div className="flex items-center gap-2 pl-[68px]">
+          // macOS overlays its traffic lights on this corner; Windows draws
+          // its own controls on the other side, so the brand starts at the edge.
+          <div className={cn("flex items-center gap-2", !isWindows && "pl-[68px]")}>
             <span className="text-[15px] font-semibold tracking-tight">
               Windle
             </span>

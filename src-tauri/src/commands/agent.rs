@@ -87,20 +87,20 @@ pub struct AiAgentScanResult {
 
 const AI_PATHS: &[AiPathSpec] = &[
     // Trae
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Trae log files" },
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/Partitions", data_type: "cache", risk: RiskLevel::Safe, description: "Trae webview cache" },
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/WebStorage", data_type: "cache", risk: RiskLevel::Safe, description: "Trae web storage cache" },
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/CachedExtensionVSIXs", data_type: "cache", risk: RiskLevel::Safe, description: "Trae extension package cache" },
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/ModularData/ai-agent", data_type: "index", risk: RiskLevel::Caution, description: "Trae AI agent index (rebuildable)" },
-    AiPathSpec { tool: AiTool::Trae, path: "~/Library/Application Support/Trae/User/globalStorage/.ckg", data_type: "index", risk: RiskLevel::Caution, description: "Trae code knowledge graph (rebuildable)" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Trae log files" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/Partitions", data_type: "cache", risk: RiskLevel::Safe, description: "Trae webview cache" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/WebStorage", data_type: "cache", risk: RiskLevel::Safe, description: "Trae web storage cache" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/CachedExtensionVSIXs", data_type: "cache", risk: RiskLevel::Safe, description: "Trae extension package cache" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/ModularData/ai-agent", data_type: "index", risk: RiskLevel::Caution, description: "Trae AI agent index (rebuildable)" },
+    AiPathSpec { tool: AiTool::Trae, path: "%APP_SUPPORT%/Trae/User/globalStorage/.ckg", data_type: "index", risk: RiskLevel::Caution, description: "Trae code knowledge graph (rebuildable)" },
     AiPathSpec { tool: AiTool::Trae, path: "~/.trae/extensions", data_type: "extensions", risk: RiskLevel::Caution, description: "Trae installed extensions" },
     // Qoder
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/SharedClientCache/cache", data_type: "cache", risk: RiskLevel::Caution, description: "Qoder shared client cache (conversation history in 'db/' is preserved)" },
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/SharedClientCache/tmp", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder shared client temp files" },
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/SharedClientCache/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Qoder shared client logs" },
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/CachedData", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder cached data" },
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Qoder log files" },
-    AiPathSpec { tool: AiTool::Qoder, path: "~/Library/Application Support/Qoder/GPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder GPU cache" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/SharedClientCache/cache", data_type: "cache", risk: RiskLevel::Caution, description: "Qoder shared client cache (conversation history in 'db/' is preserved)" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/SharedClientCache/tmp", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder shared client temp files" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/SharedClientCache/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Qoder shared client logs" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/CachedData", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder cached data" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Qoder log files" },
+    AiPathSpec { tool: AiTool::Qoder, path: "%APP_SUPPORT%/Qoder/GPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder GPU cache" },
     AiPathSpec { tool: AiTool::Qoder, path: "~/.qoder/logs", data_type: "logs", risk: RiskLevel::Safe, description: "Qoder CLI logs" },
     AiPathSpec { tool: AiTool::Qoder, path: "~/.qoder/tmp", data_type: "cache", risk: RiskLevel::Safe, description: "Qoder temp files" },
     // Codex (OpenAI)
@@ -109,8 +109,8 @@ const AI_PATHS: &[AiPathSpec] = &[
     AiPathSpec { tool: AiTool::Codex, path: "~/.codex/sessions", data_type: "sessions", risk: RiskLevel::Caution, description: "Codex session history" },
     AiPathSpec { tool: AiTool::Codex, path: "~/.codex/archived_sessions", data_type: "sessions", risk: RiskLevel::Caution, description: "Codex archived sessions" },
     AiPathSpec { tool: AiTool::Codex, path: "~/.codex/plugins", data_type: "extensions", risk: RiskLevel::Caution, description: "Codex plugins" },
-    AiPathSpec { tool: AiTool::Codex, path: "~/Library/Application Support/Codex/component_crx_cache", data_type: "cache", risk: RiskLevel::Safe, description: "Codex component cache" },
-    AiPathSpec { tool: AiTool::Codex, path: "~/Library/Application Support/Codex/GraphiteDawnCache", data_type: "cache", risk: RiskLevel::Safe, description: "Codex graphics cache" },
+    AiPathSpec { tool: AiTool::Codex, path: "%APP_SUPPORT%/Codex/component_crx_cache", data_type: "cache", risk: RiskLevel::Safe, description: "Codex component cache" },
+    AiPathSpec { tool: AiTool::Codex, path: "%APP_SUPPORT%/Codex/GraphiteDawnCache", data_type: "cache", risk: RiskLevel::Safe, description: "Codex graphics cache" },
     // Real
     AiPathSpec { tool: AiTool::Real, path: "~/.real/.bin", data_type: "runtime", risk: RiskLevel::Caution, description: "Real runtime binaries (re-downloadable)" },
     AiPathSpec { tool: AiTool::Real, path: "~/.real/legacy-archive", data_type: "cache", risk: RiskLevel::Safe, description: "Real legacy archive" },
@@ -138,20 +138,28 @@ const AI_PATHS: &[AiPathSpec] = &[
     AiPathSpec { tool: AiTool::Dsh, path: "~/.dsh/cache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH cache" },
     AiPathSpec { tool: AiTool::Dsh, path: "~/.dsh/profiles/web/node_modules", data_type: "runtime", risk: RiskLevel::Caution, description: "DSH web profile dependencies (re-installable)" },
     AiPathSpec { tool: AiTool::Dsh, path: "~/.dsh/profiles/desktop/node_modules", data_type: "runtime", risk: RiskLevel::Caution, description: "DSH desktop profile dependencies (re-installable)" },
-    AiPathSpec { tool: AiTool::Dsh, path: "~/Library/Application Support/DSH Desktop/Cache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop HTTP cache" },
-    AiPathSpec { tool: AiTool::Dsh, path: "~/Library/Application Support/DSH Desktop/Code Cache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop code cache" },
-    AiPathSpec { tool: AiTool::Dsh, path: "~/Library/Application Support/DSH Desktop/GPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop GPU cache" },
-    AiPathSpec { tool: AiTool::Dsh, path: "~/Library/Application Support/DSH Desktop/DawnWebGPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop WebGPU cache" },
-    AiPathSpec { tool: AiTool::Dsh, path: "~/Library/Application Support/DSH Desktop/DawnGraphiteCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop Graphite cache" },
+    AiPathSpec { tool: AiTool::Dsh, path: "%APP_SUPPORT%/DSH Desktop/Cache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop HTTP cache" },
+    AiPathSpec { tool: AiTool::Dsh, path: "%APP_SUPPORT%/DSH Desktop/Code Cache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop code cache" },
+    AiPathSpec { tool: AiTool::Dsh, path: "%APP_SUPPORT%/DSH Desktop/GPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop GPU cache" },
+    AiPathSpec { tool: AiTool::Dsh, path: "%APP_SUPPORT%/DSH Desktop/DawnWebGPUCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop WebGPU cache" },
+    AiPathSpec { tool: AiTool::Dsh, path: "%APP_SUPPORT%/DSH Desktop/DawnGraphiteCache", data_type: "cache", risk: RiskLevel::Safe, description: "DSH Desktop Graphite cache" },
 ];
 
-/// Expand a leading `~` against the current home directory.
+/// The token the path table uses for the per-user application data directory.
+/// Electron apps keep the same internal layout on both platforms, so a single
+/// table describes them everywhere.
+const APP_SUPPORT_TOKEN: &str = "%APP_SUPPORT%";
+
+#[cfg(target_os = "macos")]
+const APP_SUPPORT_BASE: &str = "~/Library/Application Support";
+
+#[cfg(target_os = "windows")]
+const APP_SUPPORT_BASE: &str = "%APPDATA%";
+
+/// Expand one table entry: `%APP_SUPPORT%` for the application data directory,
+/// `~` for the home directory, `%NAME%` for an environment variable.
 fn expand_path(path: &str) -> PathBuf {
-    match path.strip_prefix('~') {
-        Some("") => permissions::home_dir(),
-        Some(rest) => permissions::home_dir().join(rest.trim_start_matches('/')),
-        None => PathBuf::from(path),
-    }
+    permissions::expand(&path.replace(APP_SUPPORT_TOKEN, APP_SUPPORT_BASE))
 }
 
 /// True when `path` matches one of the known AI agent locations. Used as the
@@ -366,6 +374,28 @@ pub async fn remove_ai_data(paths: Vec<String>, permanent: bool) -> Result<Clean
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_app_support_token_resolves_to_the_platform_data_dir() {
+        assert_eq!(
+            expand_path("%APP_SUPPORT%/Trae/logs"),
+            permissions::expand(APP_SUPPORT_BASE).join("Trae/logs")
+        );
+    }
+
+    #[test]
+    fn every_table_entry_is_recognised_by_the_guard() {
+        for spec in AI_PATHS {
+            let expanded = expand_path(spec.path);
+
+            assert!(expanded.is_absolute(), "{} must be absolute", spec.path);
+            assert!(
+                is_known_ai_path(&expanded.to_string_lossy()),
+                "{} must be recognised",
+                spec.path
+            );
+        }
+    }
 
     #[test]
     fn removal_refuses_non_ai_paths() {

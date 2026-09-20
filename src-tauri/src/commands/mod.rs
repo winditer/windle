@@ -153,7 +153,15 @@ pub async fn open_full_disk_access_settings() -> crate::utils::Result<()> {
     crate::utils::permissions::request_permissions()
 }
 
+/// The operating system the backend is running on, so the frontend can adapt
+/// window chrome and wording without duplicating the cfg logic.
+#[tauri::command]
+pub async fn platform_info() -> &'static str {
+    std::env::consts::OS
+}
+
 /// Reveal a path in Finder.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn reveal_in_finder(path: String) -> crate::utils::Result<()> {
     let target = std::path::PathBuf::from(&path);
@@ -162,6 +170,29 @@ pub async fn reveal_in_finder(path: String) -> crate::utils::Result<()> {
     }
 
     run_tool("open", &["-R", &path]).map(|_| ())
+}
+
+/// Reveal a path in File Explorer, with the item selected. Explorer exits
+/// non-zero even on success, so only a failed launch is an error here — the
+/// window opens on its own.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> crate::utils::Result<()> {
+    let target = std::path::PathBuf::from(&path);
+    if !target.exists() {
+        return Err(crate::utils::WindleError::NotFound(path));
+    }
+
+    std::process::Command::new("explorer")
+        // The quotes keep paths with spaces together: Explorer parses the
+        // switch itself rather than through `argv`.
+        .arg(format!("/select,\"{path}\""))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| crate::utils::WindleError::Command {
+            command: "explorer".into(),
+            message: e.to_string(),
+        })
 }
 
 /// Run a system utility and return its stdout, mapping a non-zero exit to an
@@ -186,6 +217,7 @@ pub(crate) fn run_tool(command: &str, args: &[&str]) -> crate::utils::Result<Str
 
 /// [`run_tool`], but feeds `input` to the process on stdin. Used to pipe plist
 /// output from one tool into `plutil`.
+#[cfg(target_os = "macos")]
 pub(crate) fn run_tool_stdin(
     command: &str,
     args: &[&str],
@@ -222,6 +254,7 @@ pub(crate) fn run_tool_stdin(
 ///
 /// macOS ships most `Info.plist` files in the binary format, so instead of
 /// pulling in a plist parser we let `plutil` normalise them for us.
+#[cfg(target_os = "macos")]
 pub(crate) fn read_plist(path: &std::path::Path) -> crate::utils::Result<serde_json::Value> {
     if !path.exists() {
         return Err(crate::utils::WindleError::NotFound(
@@ -241,6 +274,7 @@ pub(crate) fn read_plist(path: &std::path::Path) -> crate::utils::Result<serde_j
 }
 
 /// Convert plist text (as produced by `hdiutil -plist`) into JSON.
+#[cfg(target_os = "macos")]
 pub(crate) fn plist_text_to_json(plist: &str) -> crate::utils::Result<serde_json::Value> {
     let json = run_tool_stdin("plutil", &["-convert", "json", "-o", "-", "--", "-"], plist)?;
 
@@ -251,6 +285,7 @@ pub(crate) fn plist_text_to_json(plist: &str) -> crate::utils::Result<serde_json
 }
 
 /// Shorthand for pulling a string out of a parsed plist.
+#[cfg(target_os = "macos")]
 pub(crate) fn plist_string(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)

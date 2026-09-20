@@ -1,7 +1,7 @@
 [package]
 name = "windle"
-version = "0.5.0"
-description = "Windle — macOS system maintenance toolkit"
+version = "0.6.0"
+description = "Windle — system maintenance toolkit for macOS and Windows"
 license = "MIT"
 authors = ["Windle"]
 edition = "2021"
@@ -27,6 +27,33 @@ rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process"] }
 thiserror = "2"
 dirs = "5"
+
+# Windows-only platform integrations: Recycle Bin moves (`trash`), registry
+# reads (`winreg`) and the token/pipe/power/system APIs (`windows`).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    # `DeviceIoControl` with the storage eject IOCTL, used to detach mounted
+    # images the way `hdiutil detach` does on macOS.
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_Pipes",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
+    # `SHELLEXECUTEINFOW` only implements `Default` when this is on, and the
+    # elevated helper is started through that struct.
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+] }
+winreg = "0.55"
+trash = "5"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 codegen-units = 1

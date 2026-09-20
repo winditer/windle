@@ -179,6 +179,8 @@ const zhCN = {
     "deepClean.group.sandbox-caches": "沙盒应用缓存",
     "deepClean.group.system-caches": "系统级缓存",
     "deepClean.group.temp-files": "临时文件",
+    "deepClean.group.shell-caches": "Windows 缓存",
+    "deepClean.group.dev-caches": "开发者缓存",
     // Deep Clean — aria templates
     "deepClean.selectCategoryAria": "选择 {name}",
     "deepClean.selectItemAria": "选择 {name}",
@@ -321,6 +323,23 @@ const zhCN = {
     "optimize.runMaintenanceDesc": "立即运行每日、每周和每月的系统维护脚本。",
     "optimize.resetDockDesc": "在 Dock 或调度中心异常时重新加载它们。",
     "optimize.verifyDiskDesc": "对启动卷执行只读的急救检查。",
+    // System Optimize — Windows-only tasks (ids exist only on Windows).
+    "optimize.clearTempFiles": "清理临时文件",
+    "optimize.clearTempFilesDesc": "清空用户、Windows 和 ProgramData 临时文件夹。",
+    "optimize.clearUpdateCache": "清理 Windows 更新缓存",
+    "optimize.clearUpdateCacheDesc": "删除已下载的更新文件，让卡住的更新重新下载。",
+    "optimize.rebuildSearchIndex": "重建搜索索引",
+    "optimize.rebuildSearchIndexDesc": "删除索引数据库交还给 Windows 重建，完成前搜索会一直较慢。",
+    "optimize.resetIconCache": "刷新图标缓存",
+    "optimize.resetIconCacheDesc": "修复资源管理器中空白或错误的图标。",
+    "optimize.verifySystemFiles": "验证系统文件",
+    "optimize.verifySystemFilesDesc": "运行系统文件检查器，就地修复损坏的 Windows 文件。",
+    "optimize.repairSystemImage": "修复系统映像",
+    "optimize.repairSystemImageDesc": "运行 DISM，用组件存储中的副本替换受损文件。",
+    "optimize.optimizeSystemDrive": "优化系统盘",
+    "optimize.optimizeSystemDriveDesc": "对固态硬盘执行 TRIM，对机械硬盘执行碎片整理。",
+    "optimize.checkSystemDrive": "检查系统盘",
+    "optimize.checkSystemDriveDesc": "在磁盘保持联机的情况下扫描文件系统错误。",
     "optimize.statusReady": "就绪",
     "optimize.statusRunning": "运行中",
     "optimize.statusDone": "已完成",
@@ -519,6 +538,12 @@ const zhCN = {
     "confirm.cancel": "取消",
     "confirm.working": "处理中…",
 
+    // Window controls (Windows only — the frameless window draws its own)
+    "window.minimize": "最小化",
+    "window.maximize": "最大化",
+    "window.restore": "还原",
+    "window.close": "关闭",
+
     // Menu Bar
     "menubar.quickClean": "立即清理",
     "menubar.systemStatus": "系统状态",
@@ -546,6 +571,36 @@ const zhCN = {
     "menubar.releaseMemory": "释放内存",
     "menubar.releasing": "释放中...",
     "menubar.freed": "已释放 {bytes}",
+
+    // -------------------------------------------------------------------
+    // Windows wording overrides. `t()` prefers `${key}.windows` over the base
+    // key when the backend reports Windows, so macOS-specific phrasing
+    // (Trash, .app bundles, Xcode, Spotlight…) can be replaced without
+    // touching any call site. Keys without an override keep the base string.
+    // -------------------------------------------------------------------
+    "deepClean.scanningHint.windows": "正在扫描缓存和临时文件夹…",
+    "deepClean.freedDetail.windows": "项目已尽可能移至回收站，您可以随时恢复。",
+    "deepClean.emptyMessage.windows": "Windle 会检查系统与用户缓存、浏览器数据、日志、开发者缓存和回收站，然后让您选择要清理的内容。",
+    "deepClean.confirmRemoveMsg.windows": "将删除 {files} 个文件，{categories} 个类别。项目会移至回收站。",
+    "deepClean.category.trash.windows": "回收站",
+    "deepClean.category.xcode-derived-data.windows": "开发工具缓存",
+    "deepClean.categoryDesc.xcode-derived-data.windows": "包管理器与 IDE 生成的缓存，下次构建或安装时会重新生成。",
+    "uninstall.managedByMacOS.windows": "由 Windows 管理",
+    "uninstall.appBundles.windows": "安装目录",
+    "uninstall.appBundlesHint.windows": "安装目录大小",
+    "uninstall.searchPlaceholder.windows": "搜索应用或发行者…",
+    "uninstall.removedDetail.windows": "安装目录和所有选中的残留已移至回收站。",
+    "uninstall.confirmMsg.windows": "将移除 {bytes}：安装目录加上 {count} 个残留项目。",
+    "optimize.maintenanceDesc.windows": "八个 Windows 不会自行运行的例行任务。不触碰您的文件。",
+    "monitor.avgDown.windows": "平均下行 {mb} MB/s",
+    "dashboard.startupDisk.windows": "系统盘",
+    "dashboard.volume.windows": "磁盘",
+    "installer.deleting.windows": "正在将安装包移至回收站…",
+    "installer.freedDetail.windows": "安装包已移至回收站 — 清空回收站以永久回收空间。",
+    "installer.confirmDeleteMsg.windows": "将把 {bytes} 移至回收站。已安装的应用不受影响 — 这些文件仅在重新安装时需要。",
+    "agent.freedDetail.windows": "AI 工具数据已移至回收站。",
+    "agent.confirmDeleteMsg.windows": "将把 {bytes} 移至回收站。缓存和日志可安全删除，会话历史请谨慎。",
+    "menubar.quitStatusBar.windows": "退出托盘",
 };
 
 export type TranslationKey = keyof typeof zhCN;
@@ -731,6 +786,8 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "deepClean.group.sandbox-caches": "Sandboxed App Caches",
     "deepClean.group.system-caches": "System Caches",
     "deepClean.group.temp-files": "Temporary Files",
+    "deepClean.group.shell-caches": "Windows Caches",
+    "deepClean.group.dev-caches": "Developer Caches",
     // Deep Clean — aria templates
     "deepClean.selectCategoryAria": "Select {name}",
     "deepClean.selectItemAria": "Select {name}",
@@ -873,6 +930,23 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "optimize.runMaintenanceDesc": "Runs the daily, weekly and monthly periodic scripts now.",
     "optimize.resetDockDesc": "Reloads the Dock and Mission Control when they misbehave.",
     "optimize.verifyDiskDesc": "Runs a read-only First Aid check on the boot volume.",
+    // System Optimize — Windows-only tasks (ids exist only on Windows).
+    "optimize.clearTempFiles": "Clear Temporary Files",
+    "optimize.clearTempFilesDesc": "Empties the user, Windows and ProgramData temp folders.",
+    "optimize.clearUpdateCache": "Clear the Windows Update Cache",
+    "optimize.clearUpdateCacheDesc": "Removes downloaded update files so a stalled update downloads again.",
+    "optimize.rebuildSearchIndex": "Rebuild the Search Index",
+    "optimize.rebuildSearchIndexDesc": "Deletes the index database so Windows builds it again. Searching stays slow until it finishes.",
+    "optimize.resetIconCache": "Refresh the Icon Cache",
+    "optimize.resetIconCacheDesc": "Fixes blank or wrong icons in File Explorer.",
+    "optimize.verifySystemFiles": "Verify System Files",
+    "optimize.verifySystemFilesDesc": "Runs System File Checker, which repairs corrupted Windows files in place.",
+    "optimize.repairSystemImage": "Repair the System Image",
+    "optimize.repairSystemImageDesc": "Runs DISM to replace damaged files in the component store.",
+    "optimize.optimizeSystemDrive": "Optimize the System Drive",
+    "optimize.optimizeSystemDriveDesc": "Runs TRIM on SSDs and defragmentation on hard drives.",
+    "optimize.checkSystemDrive": "Check the System Drive",
+    "optimize.checkSystemDriveDesc": "Scans the file system for errors without taking the drive offline.",
     "optimize.statusReady": "Ready",
     "optimize.statusRunning": "Running",
     "optimize.statusDone": "Done",
@@ -1071,6 +1145,12 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "confirm.cancel": "Cancel",
     "confirm.working": "Working…",
 
+    // Window controls (Windows only — the frameless window draws its own)
+    "window.minimize": "Minimize",
+    "window.maximize": "Maximize",
+    "window.restore": "Restore",
+    "window.close": "Close",
+
     // Menu Bar
     "menubar.quickClean": "Quick Clean",
     "menubar.systemStatus": "System Status",
@@ -1098,5 +1178,35 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "menubar.releaseMemory": "Release Memory",
     "menubar.releasing": "Releasing...",
     "menubar.freed": "Freed {bytes}",
+
+    // -------------------------------------------------------------------
+    // Windows wording overrides. `t()` prefers `${key}.windows` over the base
+    // key when the backend reports Windows, so macOS-specific phrasing
+    // (Trash, .app bundles, Xcode, Spotlight…) can be replaced without
+    // touching any call site. Keys without an override keep the base string.
+    // -------------------------------------------------------------------
+    "deepClean.scanningHint.windows": "Walking your cache and temp folders…",
+    "deepClean.freedDetail.windows": "Items were moved to the Recycle Bin where possible, so you can still put them back.",
+    "deepClean.emptyMessage.windows": "Windle looks through system and user caches, browser data, logs, developer caches and your Recycle Bin — then lets you choose what goes.",
+    "deepClean.confirmRemoveMsg.windows": "{files} files across {categories} categories will be deleted. Items go to the Recycle Bin.",
+    "deepClean.category.trash.windows": "Recycle Bin",
+    "deepClean.category.xcode-derived-data.windows": "Developer caches",
+    "deepClean.categoryDesc.xcode-derived-data.windows": "Caches produced by package managers and IDEs, regenerated on the next build or install.",
+    "uninstall.managedByMacOS.windows": "managed by Windows",
+    "uninstall.appBundles.windows": "Install folders",
+    "uninstall.appBundlesHint.windows": "Size of the install folders",
+    "uninstall.searchPlaceholder.windows": "Search apps or publishers…",
+    "uninstall.removedDetail.windows": "The install folder and every selected leftover went to the Recycle Bin.",
+    "uninstall.confirmMsg.windows": "{bytes} will be removed: the install folder plus {count} leftover items.",
+    "optimize.maintenanceDesc.windows": "Eight routine tasks Windows never runs on its own. Nothing here touches your files.",
+    "monitor.avgDown.windows": "avg down {mb} MB/s",
+    "dashboard.startupDisk.windows": "System drive",
+    "dashboard.volume.windows": "Disk",
+    "installer.deleting.windows": "Moving installers to the Recycle Bin…",
+    "installer.freedDetail.windows": "The installers are in the Recycle Bin — empty it to reclaim the space for good.",
+    "installer.confirmDeleteMsg.windows": "{bytes} will be moved to the Recycle Bin. Apps you already installed keep working — these files are only needed to install again.",
+    "agent.freedDetail.windows": "AI tool data has been moved to the Recycle Bin.",
+    "agent.confirmDeleteMsg.windows": "This will move {bytes} to the Recycle Bin. Cache and logs are safe to delete, but be cautious with session history.",
+    "menubar.quitStatusBar.windows": "Quit Tray",
   },
 };

@@ -333,9 +333,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let root = PathBuf::from("/tmp").join(format!("windle-purge-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        root
+        crate::utils::test_support::scratch(&format!("purge-{name}"))
     }
 
     #[test]

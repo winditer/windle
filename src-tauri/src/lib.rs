@@ -9,6 +9,18 @@ use tauri::{
     WindowEvent,
 };
 
+/// When the tray popup last hid itself because it lost focus. A click on the
+/// tray icon deactivates the popup before the click is delivered on Windows,
+/// so the toggle below has to tell that auto-hide apart from a user close.
+static POPUP_HIDDEN_AT: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
+/// Label of the tray menu's "hide the icon, keep the app" item.
+#[cfg(target_os = "macos")]
+const TRAY_QUIT_LABEL: &str = "退出状态栏";
+#[cfg(not(target_os = "macos"))]
+const TRAY_QUIT_LABEL: &str = "退出托盘";
+
 /// Menu bar / status bar commands. Kept in a dedicated module so the
 /// `#[tauri::command]` helper macros do not clash with `generate_handler!`,
 /// which lives in the same crate-root module.
@@ -44,6 +56,9 @@ mod menubar {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         }
         if let Some(window) = app.get_webview_window("main") {
+            // A window hidden while minimized stays minimized through `show`
+            // on Windows, so it is restored first.
+            let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -56,26 +71,50 @@ mod menubar {
 /// Build and run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Launching Windle again must not start a second copy. macOS routes that
+    // through `RunEvent::Reopen` further down, so the plugin covers the other
+    // platforms; it has to be registered before any other plugin to get the
+    // chance to stop the second instance early.
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    let app = builder
         .plugin(tauri_plugin_shell::init())
         .manage(commands::clean::CleanState::default())
         .manage(commands::monitor::MonitorState::default())
         .setup(|app| {
-            // Build the right-click context menu.
+            // Build the right-click context menu. Its labels are the one piece
+            // of UI the frontend cannot localize — it is built here, once — so
+            // they follow the platform's own wording instead: the icon sits in
+            // the menu bar on macOS and in the notification area on Windows.
             let open_item = MenuItem::with_id(app, "open", "打开 Windle", true, None::<&str>)?;
             let quit_tray_item =
-                MenuItem::with_id(app, "quit_tray", "退出状态栏", true, None::<&str>)?;
+                MenuItem::with_id(app, "quit_tray", TRAY_QUIT_LABEL, true, None::<&str>)?;
             let quit_app_item =
                 MenuItem::with_id(app, "quit_app", "退出 Windle", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_tray_item, &quit_app_item])?;
 
-            // Build the tray icon using a template image (monochrome black on
-            // transparent) so macOS automatically adapts to light/dark mode.
+            // macOS takes a template image (monochrome black on transparent)
+            // and adapts it to light and dark menu bars automatically. Windows
+            // has no such notion — it would simply draw the black shape — so
+            // the coloured application icon is used there instead.
+            #[cfg(target_os = "macos")]
             let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            #[cfg(not(target_os = "macos"))]
+            let tray_icon_bytes = include_bytes!("../icons/32x32.png");
+
             let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)?;
             let _tray = TrayIconBuilder::with_id("windle-tray")
                 .icon(tray_icon)
-                .icon_as_template(true)
+                .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("Windle")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -87,6 +126,7 @@ pub fn run() {
                                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
                             }
                             if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
@@ -123,12 +163,21 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("menubar") {
                             let is_visible = window.is_visible().unwrap_or(false);
-                            if is_visible {
+                            // A recent auto-hide means the click that hid the
+                            // popup was this very click on the tray icon, so
+                            // it asked to close rather than reopen.
+                            let just_hid = POPUP_HIDDEN_AT
+                                .lock()
+                                .ok()
+                                .and_then(|at| *at)
+                                .is_some_and(|at| {
+                                    at.elapsed() < std::time::Duration::from_millis(250)
+                                });
+                            if is_visible || just_hid {
                                 let _ = window.hide();
                             } else {
-                                // Position the popup below the tray icon.
+                                // Position the popup next to the tray icon.
                                 // rect.position is in physical coordinates.
-                                // On macOS, menu bar is at the top, so popup goes below it.
                                 let (pos_x, pos_y, size_w, size_h) = match (&rect.position, &rect.size) {
                                     (tauri::Position::Physical(pos), tauri::Size::Physical(sz)) => {
                                         (pos.x as f64, pos.y as f64, sz.width as f64, sz.height as f64)
@@ -139,10 +188,40 @@ pub fn run() {
                                     _ => (0.0, 0.0, 0.0, 0.0),
                                 };
                                 let popup_width = 340.0;
-                                let x = pos_x + size_w / 2.0 - popup_width / 2.0;
-                                let y = pos_y + size_h + 4.0;
-                                // Clamp x to keep popup on screen.
-                                let x = if x < 0.0 { 0.0 } else { x };
+                                let popup_height = window
+                                    .outer_size()
+                                    .map(|size| size.height as f64)
+                                    .unwrap_or(480.0);
+
+                                // Which side of the icon has room depends on
+                                // where the bar sits: macOS keeps its menu bar
+                                // along the top, Windows usually has the
+                                // taskbar at the bottom, and either can be
+                                // moved. Comparing the icon with the middle of
+                                // the monitor it sits on picks the direction;
+                                // the icon's own point is the only reliable
+                                // hint, since another monitor may be a
+                                // different height.
+                                let (center_x, center_y) =
+                                    (pos_x + size_w / 2.0, pos_y + size_h / 2.0);
+                                let opens_below = app
+                                    .monitor_from_point(center_x, center_y)
+                                    .ok()
+                                    .flatten()
+                                    .map(|monitor| {
+                                        let middle = monitor.position().y as f64
+                                            + monitor.size().height as f64 / 2.0;
+                                        center_y < middle
+                                    })
+                                    .unwrap_or(true);
+
+                                let x = (center_x - popup_width / 2.0).max(0.0);
+                                let y = if opens_below {
+                                    pos_y + size_h + 4.0
+                                } else {
+                                    (pos_y - popup_height - 4.0).max(0.0)
+                                };
+
                                 use tauri::PhysicalPosition;
                                 let _ = window
                                     .set_position(PhysicalPosition::new(x as i32, y as i32));
@@ -161,6 +240,7 @@ pub fn run() {
             commands::get_dashboard_summary,
             commands::check_permissions,
             commands::open_full_disk_access_settings,
+            commands::platform_info,
             commands::reveal_in_finder,
             // Deep Clean
             commands::clean::scan_junk,
@@ -234,6 +314,9 @@ pub fn run() {
                     let label = window.label();
                     // Auto-hide the popup when it loses focus (macOS standard).
                     if label == "menubar" {
+                        if let Ok(mut at) = POPUP_HIDDEN_AT.lock() {
+                            *at = Some(std::time::Instant::now());
+                        }
                         let _ = window.hide();
                     } else if label == "main"
                         && window.is_minimized().unwrap_or(false)
@@ -259,20 +342,21 @@ pub fn run() {
     // app from Finder / Launchpad / Applications did nothing while the
     // app was dock-less in the status bar).
     app.run(|app_handle, event| {
+        // macOS delivers `Reopen` instead of starting a second process when the
+        // app is launched again while already running: restore the Dock icon
+        // and bring the main window back up. Elsewhere the single-instance
+        // plugin registered above already handles that.
+        #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
-            // macOS delivers `Reopen` instead of starting a second process
-            // when the app is launched again while already running. Restore
-            // the Dock icon and bring the main window back up.
-            #[cfg(target_os = "macos")]
-            {
-                let _ =
-                    app_handle.set_activation_policy(tauri::ActivationPolicy::Regular);
-            }
+            let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Regular);
             if let Some(window) = app_handle.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }
+
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app_handle, event);
     });
 }

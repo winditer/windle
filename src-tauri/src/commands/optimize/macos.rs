@@ -1,19 +1,21 @@
-//! System Optimize — maintenance tasks and startup items.
+//! The macOS task set — Spotlight, Launch Services, the Dock — and the `sudo`
+//! elevation flow that caches the admin password so a whole batch only ever
+//! shows one dialog.
 
-use std::collections::BTreeMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use super::RiskLevel;
-use crate::utils::{format, permissions, WindleError, Result};
-
-pub const PROGRESS_EVENT: &str = "optimize://progress";
+use super::super::{plist_string, read_plist, run_tool, RiskLevel};
+use super::{
+    emit, escalate, execute_with, summarise, tool_name, LoginItem, LoginItemKind, OptimizeOutcome,
+    OptimizeTask, OptimizeTaskId, TaskStatus,
+};
+use crate::utils::{format, permissions, Result, WindleError};
 
 /// `lsregister` is not on `PATH`, it lives inside the LaunchServices framework.
 const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -29,95 +31,12 @@ const PERIODIC_BINARY: &str = "/usr/sbin/periodic";
 const PERIODIC_SKIP_MESSAGE: &str =
     "Skipped: maintenance scripts are not available on this macOS version";
 
-/// Failure text that means "this needed root", so the UI can offer to retry
-/// with an admin prompt instead of showing a raw shell error.
-const ELEVATION_HINTS: [&str; 6] = [
-    "operation not permitted",
-    "permission denied",
-    "must be run as root",
-    "must be root",
-    "requires root",
-    "only root",
-];
-
 /// Cached admin password for batched elevated execution. The password is kept
 /// in memory for 15 minutes after the first successful authorization so that
 /// "Optimize All" only shows ONE password dialog instead of one per task.
 static CACHED_PASSWORD: Mutex<Option<String>> = Mutex::new(None);
 static LAST_AUTH_TIME: AtomicU64 = AtomicU64::new(0);
 const AUTH_CACHE_SECS: u64 = 15 * 60;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OptimizeTaskId {
-    PurgeMemory,
-    FlushDns,
-    RebuildSpotlight,
-    RebuildLaunchServices,
-    ResetDock,
-    ClearQuicklook,
-    RunMaintenanceScripts,
-    VerifyDisk,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OptimizeTask {
-    pub id: OptimizeTaskId,
-    pub label: String,
-    pub description: String,
-    pub risk: RiskLevel,
-    pub requires_elevation: bool,
-    pub estimated_seconds: u32,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum LoginItemKind {
-    LaunchAgent,
-    LaunchDaemon,
-    LoginItem,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoginItem {
-    pub id: String,
-    pub label: String,
-    pub path: String,
-    pub kind: LoginItemKind,
-    pub enabled: bool,
-    pub is_system: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OptimizeOutcome {
-    pub task_id: OptimizeTaskId,
-    pub succeeded: bool,
-    pub message: String,
-    pub duration_ms: u64,
-}
-
-/// Where a task is up to, streamed while a batch runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskStatus {
-    Pending,
-    Running,
-    Done,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OptimizeProgress {
-    pub task_id: OptimizeTaskId,
-    pub status: TaskStatus,
-    pub index: usize,
-    pub total: usize,
-    pub message: Option<String>,
-}
 
 /// One shell invocation belonging to a task.
 struct Step {
@@ -172,40 +91,23 @@ fn optional_elevated(command: &'static str, args: &[&'static str]) -> Step {
     }
 }
 
-/// Static task catalogue, including the risk metadata the UI shows.
-#[tauri::command]
-pub async fn list_optimize_tasks() -> Result<Vec<OptimizeTask>> {
-    Ok(catalogue())
-}
-
-/// Run one maintenance task.
-#[tauri::command]
-pub async fn run_optimize_task(app: AppHandle, task_id: OptimizeTaskId) -> Result<OptimizeOutcome> {
-    Ok(execute(&app, task_id, 0, 1).await)
-}
-
 /// Run several tasks in order, one outcome per task. When multiple tasks
 /// need elevation, the admin password is verified once up front (via a
 /// trivial `true` command) so only ONE password dialog appears for the
 /// entire run. The password is then cached for 15 minutes and reused by
 /// every subsequent `run_elevated` call.
-#[tauri::command]
-pub async fn run_optimize_tasks(
-    app: AppHandle,
-    task_ids: Vec<OptimizeTaskId>,
-) -> Result<Vec<OptimizeOutcome>> {
+pub async fn run_tasks(app: &AppHandle, task_ids: Vec<OptimizeTaskId>) -> Vec<OptimizeOutcome> {
     let total = task_ids.len();
 
     // Everything queued is announced up front so the UI can render the whole
     // run before the first command starts.
     for (index, task_id) in task_ids.iter().enumerate() {
-        emit(&app, *task_id, TaskStatus::Pending, index, total, None);
+        emit(app, *task_id, TaskStatus::Pending, index, total, None);
     }
 
     // Pre-warm the auth cache: if any task needs elevation, verify the
     // admin password once so only ONE dialog appears for the whole run.
-    let needs_elevation = task_ids.iter().any(|id| needs_elevation(*id));
-    if needs_elevation {
+    if task_ids.iter().any(|id| needs_elevation(*id)) {
         let _ = tauri::async_runtime::spawn_blocking(|| {
             run_elevated_batch(&["true".to_string()])
         })
@@ -216,32 +118,14 @@ pub async fn run_optimize_tasks(
 
     let mut outcomes = Vec::with_capacity(total);
     for (index, task_id) in task_ids.into_iter().enumerate() {
-        outcomes.push(execute(&app, task_id, index, total).await);
+        outcomes.push(execute_with(app, task_id, index, total, run_task).await);
     }
 
-    Ok(outcomes)
-}
-
-/// Launch agents, daemons and login items that run at startup.
-#[tauri::command]
-pub async fn list_login_items() -> Result<Vec<LoginItem>> {
-    Ok(startup_items())
+    outcomes
 }
 
 /// Enable or disable a startup item.
-#[tauri::command]
-pub async fn set_login_item_enabled(id: String, enabled: bool) -> Result<()> {
-    // Look the item up rather than trusting the caller: it gives us the label
-    // and the domain, and refuses ids that are not startup items at all.
-    let item = startup_items()
-        .into_iter()
-        .find(|item| item.id == id)
-        .ok_or_else(|| WindleError::NotFound(id))?;
-
-    if item.is_system {
-        return Err(WindleError::Protected(item.path));
-    }
-
+pub fn set_login_item_enabled(item: &LoginItem, enabled: bool) -> Result<()> {
     let domain = match item.kind {
         LoginItemKind::LaunchAgent => format!("gui/{}", permissions::current_uid()),
         LoginItemKind::LaunchDaemon => {
@@ -269,83 +153,15 @@ pub async fn set_login_item_enabled(id: String, enabled: bool) -> Result<()> {
     let action = if enabled { "enable" } else { "disable" };
     let target = format!("{domain}/{}", item.label);
 
-    super::run_tool("launchctl", &[action, &target])
+    run_tool("launchctl", &[action, &target])
         .map(|_| ())
         .map_err(|error| escalate("launchctl", error))
 }
 
 /// Clear the cached admin password so the next elevated task re-prompts.
-#[tauri::command]
-pub fn clear_optimize_auth() {
+pub fn clear_auth() {
     *CACHED_PASSWORD.lock().unwrap() = None;
     LAST_AUTH_TIME.store(0, Ordering::Relaxed);
-}
-
-/// Run a task off the async runtime (some of these block for a minute) and
-/// report its progress along the way.
-async fn execute(
-    app: &AppHandle,
-    task_id: OptimizeTaskId,
-    index: usize,
-    total: usize,
-) -> OptimizeOutcome {
-    emit(app, task_id, TaskStatus::Running, index, total, None);
-
-    let started = std::time::Instant::now();
-
-    let result = match tauri::async_runtime::spawn_blocking(move || run_task(task_id)).await {
-        Ok(result) => result,
-        Err(error) => Err(WindleError::Command {
-            command: "optimize".into(),
-            message: error.to_string(),
-        }),
-    };
-
-    let succeeded = result.is_ok();
-    let message = match result {
-        Ok(message) => message,
-        Err(error) => error.to_string(),
-    };
-
-    emit(
-        app,
-        task_id,
-        if succeeded {
-            TaskStatus::Done
-        } else {
-            TaskStatus::Error
-        },
-        index,
-        total,
-        Some(message.clone()),
-    );
-
-    OptimizeOutcome {
-        task_id,
-        succeeded,
-        message,
-        duration_ms: started.elapsed().as_millis() as u64,
-    }
-}
-
-fn emit(
-    app: &AppHandle,
-    task_id: OptimizeTaskId,
-    status: TaskStatus,
-    index: usize,
-    total: usize,
-    message: Option<String>,
-) {
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        OptimizeProgress {
-            task_id,
-            status,
-            index,
-            total,
-            message,
-        },
-    );
 }
 
 /// The shell work behind each task. Building the step list is split out so
@@ -559,14 +375,14 @@ fn run_steps(steps: &[Step]) -> Result<String> {
             let command = build_shell_command(step.command, &step.args);
             run_elevated(tool_name(step.command), &command)
         } else {
-            super::run_tool(step.command, &step.args)
+            run_tool(step.command, &step.args)
         };
 
         match result {
             Ok(output) => {
                 // Keep the most recent tool that actually said something —
                 // `diskutil` and `mdutil` both report their findings here.
-                if let Some(line) = last_meaningful_line(&output) {
+                if let Some(line) = super::last_meaningful_line(&output) {
                     report = line;
                 }
             }
@@ -793,11 +609,6 @@ fn run_sudo(command: &str, password: &str) -> std::io::Result<std::process::Outp
     child.wait_with_output()
 }
 
-/// Escape a string for inclusion in a single-quoted shell context.
-fn shell_escape_single(s: &str) -> String {
-    s.replace('\'', "'\\''")
-}
-
 /// Strip sudo's "Password:" prompt and blank lines from command output.
 fn filter_sudo_output(output: &str) -> String {
     output
@@ -862,53 +673,9 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-/// Turn a "you are not root" shell failure into an error the UI can act on,
-/// and a missing binary into something clearer than `os error 2`.
-fn escalate(command: &str, error: WindleError) -> WindleError {
-    if let WindleError::Io(io_error) = &error {
-        if io_error.kind() == std::io::ErrorKind::NotFound {
-            return WindleError::Command {
-                command: tool_name(command).to_string(),
-                message: "not available on this system".into(),
-            };
-        }
-    }
-
-    let text = error.to_string().to_lowercase();
-    if ELEVATION_HINTS.iter().any(|hint| text.contains(hint)) {
-        return WindleError::NeedsElevation(tool_name(command).to_string());
-    }
-
-    error
-}
-
-/// A one-line version of an error, for folding into a longer message.
-fn summarise(error: &WindleError) -> String {
-    let text = error.to_string();
-
-    match text.lines().next() {
-        Some(line) if !line.trim().is_empty() => line.trim().to_string(),
-        _ => "failed".to_string(),
-    }
-}
-
-fn last_meaningful_line(output: &str) -> Option<String> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
-        .map(str::to_string)
-}
-
-/// `.../Support/lsregister` reads better as `lsregister` in a message.
-fn tool_name(command: &str) -> &str {
-    command.rsplit('/').next().unwrap_or(command)
-}
-
 /// Every launch agent, daemon and classic login item we can see, sorted by
 /// label and de-duplicated by path.
-fn startup_items() -> Vec<LoginItem> {
+pub fn startup_items() -> Vec<LoginItem> {
     let home = permissions::home_dir();
 
     let sources: [(PathBuf, LoginItemKind); 3] = [
@@ -964,11 +731,11 @@ fn read_job(
     disabled_agents: &HashSet<String>,
     disabled_daemons: &HashSet<String>,
 ) -> Option<LoginItem> {
-    let plist = super::read_plist(path).ok();
+    let plist = read_plist(path).ok();
 
     let label = plist
         .as_ref()
-        .and_then(|plist| super::plist_string(plist, "Label"))
+        .and_then(|plist| plist_string(plist, "Label"))
         // The file name mirrors the label by convention, so it is a safe
         // fallback for a plist we could not parse.
         .unwrap_or_else(|| format::file_name(path).trim_end_matches(".plist").to_string());
@@ -981,7 +748,7 @@ fn read_job(
     let program = plist
         .as_ref()
         .and_then(|plist| {
-            super::plist_string(plist, "Program").or_else(|| {
+            plist_string(plist, "Program").or_else(|| {
                 plist
                     .get("ProgramArguments")
                     .and_then(serde_json::Value::as_array)
@@ -1021,7 +788,7 @@ fn read_job(
 fn classic_login_items() -> Vec<LoginItem> {
     let script = "tell application \"System Events\" to get the path of every login item";
 
-    let Ok(output) = super::run_tool("osascript", &["-e", script]) else {
+    let Ok(output) = run_tool("osascript", &["-e", script]) else {
         return Vec::new();
     };
 
@@ -1050,7 +817,7 @@ fn classic_login_items() -> Vec<LoginItem> {
 
 /// Labels that `launchctl` has been told not to load in `domain`.
 fn disabled_labels(domain: &str) -> HashSet<String> {
-    let Ok(output) = super::run_tool("launchctl", &["print-disabled", domain]) else {
+    let Ok(output) = run_tool("launchctl", &["print-disabled", domain]) else {
         return HashSet::new();
     };
 
@@ -1073,7 +840,7 @@ fn parse_disabled(output: &str) -> HashSet<String> {
         .collect()
 }
 
-fn catalogue() -> Vec<OptimizeTask> {
+pub fn catalogue() -> Vec<OptimizeTask> {
     // macOS 15+ removed `periodic` entirely, so the maintenance-scripts
     // task skips itself instantly and never needs admin privileges.
     let periodic = periodic_available();
@@ -1237,45 +1004,6 @@ mod tests {
     }
 
     #[test]
-    fn a_permission_failure_asks_for_elevation() {
-        let error = WindleError::Command {
-            command: "periodic".into(),
-            message: "sh: /etc/periodic: Operation not permitted".into(),
-        };
-
-        assert!(matches!(
-            escalate("periodic", error),
-            WindleError::NeedsElevation(_)
-        ));
-    }
-
-    #[test]
-    fn a_missing_binary_reports_itself_by_name() {
-        let error = WindleError::Io(std::io::Error::from(std::io::ErrorKind::NotFound));
-
-        match escalate(LSREGISTER, error) {
-            WindleError::Command { command, message } => {
-                assert_eq!(command, "lsregister");
-                assert!(message.contains("not available"));
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_ordinary_failure_is_left_alone() {
-        let error = WindleError::Command {
-            command: "diskutil".into(),
-            message: "could not be unmounted".into(),
-        };
-
-        assert!(matches!(
-            escalate("diskutil", error),
-            WindleError::Command { .. }
-        ));
-    }
-
-    #[test]
     fn reads_both_spellings_of_launchctl_overrides() {
         let output = "\
 com.apple.something => false
@@ -1422,18 +1150,6 @@ com.apple.something => false
     }
 
     #[test]
-    fn shell_escape_single_handles_plain_text() {
-        assert_eq!(shell_escape_single("simple"), "simple");
-        assert_eq!(shell_escape_single("/usr/sbin/periodic"), "/usr/sbin/periodic");
-    }
-
-    #[test]
-    fn shell_escape_single_escapes_quotes() {
-        assert_eq!(shell_escape_single("it's"), "it'\\''s");
-        assert_eq!(shell_escape_single("a'b'c"), "a'\\''b'\\''c");
-    }
-
-    #[test]
     fn filter_sudo_output_strips_password_prompt() {
         let input = "Password:\nreal output\n";
         assert_eq!(filter_sudo_output(input), "real output");
@@ -1462,12 +1178,12 @@ com.apple.something => false
     }
 
     #[test]
-    fn clear_optimize_auth_resets_cache() {
+    fn clear_auth_resets_cache() {
         // Set some state.
         *CACHED_PASSWORD.lock().unwrap() = Some("test".into());
         LAST_AUTH_TIME.store(999, Ordering::Relaxed);
 
-        clear_optimize_auth();
+        clear_auth();
 
         assert!(CACHED_PASSWORD.lock().unwrap().is_none());
         assert_eq!(LAST_AUTH_TIME.load(Ordering::Relaxed), 0);

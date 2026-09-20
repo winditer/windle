@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { ShieldAlert, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
+import { WindowControls } from "./WindowControls";
 import { NAV_BY_ID } from "@/lib/navigation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { localizedScanStage } from "@/lib/cleanStage";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/stores/appStore";
+import { selectIsWindows, useAppStore } from "@/stores/appStore";
 import { Progress, Button } from "@/components/ui";
 import { openFullDiskAccessSettings } from "@/services/dashboard";
 
@@ -21,6 +22,7 @@ export function Layout({ actions, children }: LayoutProps) {
   const progress = useAppStore((state) => state.progress);
   const lastError = useAppStore((state) => state.lastError);
   const permissions = useAppStore((state) => state.permissions);
+  const isWindows = useAppStore(selectIsWindows);
   const { t } = useTranslation();
 
   const [fdaDismissed, setFdaDismissed] = useState(false);
@@ -85,7 +87,16 @@ export function Layout({ actions, children }: LayoutProps) {
           </div>
         )}
 
-        <header className="drag-region flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-border px-6">
+        <header
+          // `data-tauri-drag-region` is what makes Windows drag (and
+          // double-click to maximize); macOS uses the CSS drag utility.
+          {...(isWindows ? { "data-tauri-drag-region": "deep" } : {})}
+          className={cn(
+            "drag-region flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-border pl-6",
+            // The caption buttons sit flush in the top-right corner.
+            isWindows ? "pr-0" : "pr-6",
+          )}
+        >
           <div className="min-w-0">
             <h1 className="truncate text-[15px] font-semibold tracking-tight">
               {t(nav.labelKey)}
@@ -95,7 +106,19 @@ export function Layout({ actions, children }: LayoutProps) {
             </p>
           </div>
 
-          {actions && <div className="no-drag flex items-center gap-2">{actions}</div>}
+          <div className="flex min-w-0 items-center self-stretch">
+            {actions && (
+              <div
+                className={cn(
+                  "no-drag flex items-center gap-2",
+                  isWindows && "pr-3",
+                )}
+              >
+                {actions}
+              </div>
+            )}
+            {isWindows && <WindowControls />}
+          </div>
         </header>
 
         {busy && (

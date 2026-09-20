@@ -94,13 +94,30 @@ pub fn elapsed(duration_value: std::time::Duration) -> String {
 }
 
 /// Replace the home prefix with `~` so paths read the way Finder shows them.
+///
+/// The comparison is done component by component so that a differently-cased
+/// path (`c:\users\...`) collapses on Windows too, and the tail is rebuilt with
+/// forward slashes to match the rest of the interface.
 pub fn tilde(path: &std::path::Path) -> String {
+    let display = crate::utils::platform::strip_verbatim(path);
     let home = crate::utils::permissions::home_dir();
-    match path.strip_prefix(&home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => path.to_string_lossy().into_owned(),
+    let home_parts = home.components().count();
+
+    if crate::utils::platform::eq(&display, &home) {
+        return "~".to_string();
     }
+
+    if crate::utils::platform::starts_with(&display, &home) {
+        let rest = display
+            .components()
+            .skip(home_parts)
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        return format!("~/{rest}");
+    }
+
+    display.to_string_lossy().into_owned()
 }
 
 /// Abbreviate a path to fit `max_chars`, keeping the first and last components
@@ -111,7 +128,10 @@ pub fn shorten_path(path: &std::path::Path, max_chars: usize) -> String {
         return display;
     }
 
-    let parts: Vec<&str> = display.split('/').filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = display
+        .split(|c: char| crate::utils::platform::SEPARATORS.contains(&c))
+        .filter(|part| !part.is_empty())
+        .collect();
     if parts.len() <= 2 {
         // Nothing to elide — truncate the tail instead.
         let kept: String = display.chars().take(max_chars.saturating_sub(1)).collect();
@@ -179,8 +199,43 @@ mod tests {
     fn tilde_collapses_the_home_prefix() {
         let home = crate::utils::permissions::home_dir();
         assert_eq!(tilde(&home), "~");
-        assert_eq!(tilde(&home.join("Library/Caches")), "~/Library/Caches");
-        assert_eq!(tilde(std::path::Path::new("/tmp")), "/tmp");
+
+        let cache = if cfg!(target_os = "windows") {
+            "AppData/Local/Temp"
+        } else {
+            "Library/Caches"
+        };
+        assert_eq!(tilde(&home.join(cache)), format!("~/{cache}"));
+
+        // A path outside the home directory is printed as it is.
+        let outside = if cfg!(target_os = "windows") {
+            std::path::Path::new("C:\\Windows")
+        } else {
+            std::path::Path::new("/tmp")
+        };
+        assert_eq!(tilde(outside), outside.to_string_lossy());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tilde_ignores_the_case_of_the_home_prefix() {
+        let home = crate::utils::permissions::home_dir();
+        let shouty = std::path::PathBuf::from(home.to_string_lossy().to_uppercase());
+
+        // `C:\USERS\NAME` and `C:\Users\Name` are the same directory.
+        assert_eq!(tilde(&shouty), "~");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn shortening_splits_on_backslashes() {
+        let path = std::path::Path::new("C:\\ProgramData\\Vendor\\App\\nested\\file.log");
+        let short = shorten_path(path, 24);
+
+        assert!(short.chars().count() <= 24, "{short} is still too long");
+        assert!(short.starts_with("C:"), "{short} lost its root");
+        assert!(short.contains('…'), "{short} kept too much");
+        assert!(short.ends_with("file.log"), "{short} lost the name");
     }
 
     #[test]

@@ -5,17 +5,23 @@ import {
   Check,
   CircleAlert,
   CircleMinus,
+  Download,
   Globe,
+  HardDrive,
+  Image,
   Loader2,
   MemoryStick,
   Play,
   RotateCcw,
   ScrollText,
   Search,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
   Timer,
+  Trash2,
   Type,
+  Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -75,6 +81,8 @@ const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
   hour12: false,
 });
 
+/** Icons/labels/descriptions by id — the backend ships macOS or Windows tasks
+ *  depending on the platform, and the frontend knows both sets. */
 const TASK_ICONS: Record<OptimizeTaskId, LucideIcon> = {
   "flush-dns": Globe,
   "purge-memory": MemoryStick,
@@ -84,6 +92,14 @@ const TASK_ICONS: Record<OptimizeTaskId, LucideIcon> = {
   "run-maintenance-scripts": CalendarClock,
   "reset-dock": AppWindow,
   "verify-disk": Stethoscope,
+  "clear-temp-files": Trash2,
+  "clear-update-cache": Download,
+  "rebuild-search-index": Search,
+  "reset-icon-cache": Image,
+  "verify-system-files": ShieldCheck,
+  "repair-system-image": Wrench,
+  "optimize-system-drive": HardDrive,
+  "check-system-drive": Stethoscope,
 };
 
 /** Translate task labels/descriptions by id — the backend only ships English. */
@@ -96,6 +112,14 @@ const TASK_LABEL_KEYS: Record<OptimizeTaskId, TranslationKey> = {
   "run-maintenance-scripts": "optimize.runMaintenance",
   "reset-dock": "optimize.resetDock",
   "verify-disk": "optimize.verifyDisk",
+  "clear-temp-files": "optimize.clearTempFiles",
+  "clear-update-cache": "optimize.clearUpdateCache",
+  "rebuild-search-index": "optimize.rebuildSearchIndex",
+  "reset-icon-cache": "optimize.resetIconCache",
+  "verify-system-files": "optimize.verifySystemFiles",
+  "repair-system-image": "optimize.repairSystemImage",
+  "optimize-system-drive": "optimize.optimizeSystemDrive",
+  "check-system-drive": "optimize.checkSystemDrive",
 };
 
 const TASK_DESC_KEYS: Record<OptimizeTaskId, TranslationKey> = {
@@ -107,6 +131,14 @@ const TASK_DESC_KEYS: Record<OptimizeTaskId, TranslationKey> = {
   "run-maintenance-scripts": "optimize.runMaintenanceDesc",
   "reset-dock": "optimize.resetDockDesc",
   "verify-disk": "optimize.verifyDiskDesc",
+  "clear-temp-files": "optimize.clearTempFilesDesc",
+  "clear-update-cache": "optimize.clearUpdateCacheDesc",
+  "rebuild-search-index": "optimize.rebuildSearchIndexDesc",
+  "reset-icon-cache": "optimize.resetIconCacheDesc",
+  "verify-system-files": "optimize.verifySystemFilesDesc",
+  "repair-system-image": "optimize.repairSystemImageDesc",
+  "optimize-system-drive": "optimize.optimizeSystemDriveDesc",
+  "check-system-drive": "optimize.checkSystemDriveDesc",
 };
 
 const STATE_TONE: Record<ItemState, "neutral" | "primary" | "success" | "danger" | "warning"> = {

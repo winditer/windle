@@ -54,7 +54,18 @@ impl History {
 
 /// Where the log lives.
 pub fn path() -> PathBuf {
-    permissions::home_dir().join("Library/Application Support/Windle/history.json")
+    #[cfg(target_os = "windows")]
+    {
+        // `%LOCALAPPDATA%` is where Windows apps keep machine-specific state
+        // that should not roam with the user's profile.
+        let base = crate::utils::platform::env_path("LOCALAPPDATA")
+            .unwrap_or_else(|| permissions::home_dir().join("AppData/Local"));
+        base.join("Windle").join("history.json")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        permissions::home_dir().join("Library/Application Support/Windle/history.json")
+    }
 }
 
 /// Read the log, treating any problem as "no history yet".
@@ -125,7 +136,7 @@ mod tests {
     /// A private log file per test, so parallel runs cannot collide and the
     /// user's real history is never touched.
     fn scratch(name: &str) -> PathBuf {
-        let file = PathBuf::from("/tmp").join(format!(
+        let file = crate::utils::test_support::scratch_base().join(format!(
             "windle-history-{name}-{}.json",
             std::process::id()
         ));

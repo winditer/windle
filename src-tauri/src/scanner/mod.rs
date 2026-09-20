@@ -48,7 +48,19 @@ impl Default for ScanOptions {
             follow_symlinks: false,
             min_size: 0,
             // Matched against a single path component, so no separators here.
-            skip_dirs: vec![".git".into(), ".Trash".into(), "Mobile Documents".into()],
+            skip_dirs: vec![
+                ".git".into(),
+                ".Trash".into(),
+                "Mobile Documents".into(),
+                // Windows: the per-volume system folders. They are protected,
+                // unreadable, or both, so descending into them only produces
+                // permission errors and meaningless numbers.
+                "$RECYCLE.BIN".into(),
+                "$SysReset".into(),
+                "$WinREAgent".into(),
+                "Config.Msi".into(),
+                "System Volume Information".into(),
+            ],
         }
     }
 }
@@ -63,28 +75,45 @@ pub struct ScanEntry {
     pub is_directory: bool,
 }
 
-/// Directories that are worth scanning for junk on every Mac.
+/// Directories that are worth scanning for junk on this platform: the caches,
+/// logs and crash reports the OS and its applications rebuild on demand.
 pub fn default_cache_roots() -> Vec<PathBuf> {
     let home = crate::utils::permissions::home_dir();
 
-    vec![
+    #[cfg(target_os = "windows")]
+    let roots = vec![
+        home.join("AppData/Local/Temp"),
+        home.join("AppData/Local/CrashDumps"),
+        home.join("AppData/Local/Microsoft/Windows/INetCache"),
+        home.join("AppData/Local/Microsoft/Windows/WER"),
+        crate::utils::permissions::expand("%SystemRoot%\\Temp"),
+    ];
+
+    #[cfg(not(target_os = "windows"))]
+    let roots = vec![
         home.join("Library/Caches"),
         home.join("Library/Logs"),
         home.join("Library/Application Support/CrashReporter"),
         home.join("Library/Developer/Xcode/DerivedData"),
         PathBuf::from("/Library/Caches"),
         PathBuf::from("/Library/Logs"),
-    ]
-    .into_iter()
-    .filter(|path| path.exists())
-    .collect()
+    ];
+
+    roots.into_iter().filter(|path| path.exists()).collect()
 }
 
-/// Directories developers usually keep their projects in.
+/// Directories where a developer's projects usually live, so the purge scanner
+/// has somewhere to start when the user does not name a folder.
 pub fn default_project_roots() -> Vec<PathBuf> {
     let home = crate::utils::permissions::home_dir();
 
-    ["Documents"]
+    #[cfg(target_os = "windows")]
+    let candidates = ["Documents", "source/repos", "Projects"];
+
+    #[cfg(not(target_os = "windows"))]
+    let candidates = ["Documents"];
+
+    candidates
         .iter()
         .map(|dir| home.join(dir))
         .filter(|path| path.is_dir())

@@ -396,8 +396,7 @@ mod tests {
 
     /// Build `root/{a.bin: 3000, b.bin: 10, nested/c.bin: 500}`.
     fn fixture(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("windle-walker-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+        let root = crate::utils::test_support::scratch(&format!("walker-{name}"));
         std::fs::create_dir_all(root.join("nested")).expect("create fixture");
         std::fs::write(root.join("a.bin"), vec![0u8; 3_000]).unwrap();
         std::fs::write(root.join("b.bin"), vec![0u8; 10]).unwrap();
@@ -463,34 +462,38 @@ mod tests {
     }
 
     /// Build a fixture that contains symlinks to both a file and a directory,
-    /// so we can verify they are never counted as files or followed.
-    fn symlink_fixture(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("windle-walker-symlink-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+    /// so we can verify they are never counted as files or followed. Returns
+    /// `None` when the platform will not let us create symlinks (Windows
+    /// without the privilege), and the caller steps aside.
+    fn symlink_fixture(name: &str) -> Option<PathBuf> {
+        let root = crate::utils::test_support::scratch(&format!("walker-symlink-{name}"));
         std::fs::create_dir_all(root.join("real_dir")).expect("create fixture");
         std::fs::write(root.join("real_dir/inner.bin"), vec![0u8; 2_000]).unwrap();
         std::fs::write(root.join("real_file.bin"), vec![0u8; 4_000]).unwrap();
 
-        // Symlink to a file.
-        std::os::unix::fs::symlink(
-            root.join("real_file.bin"),
-            root.join("link_to_file"),
-        )
-        .expect("create file symlink");
+        // Symlink to a file, then to a directory.
+        let file_link = crate::utils::test_support::symlink_file(
+            &root.join("real_file.bin"),
+            &root.join("link_to_file"),
+        );
+        let dir_link = crate::utils::test_support::symlink_dir(
+            &root.join("real_dir"),
+            &root.join("link_to_dir"),
+        );
 
-        // Symlink to a directory.
-        std::os::unix::fs::symlink(
-            root.join("real_dir"),
-            root.join("link_to_dir"),
-        )
-        .expect("create dir symlink");
+        if !file_link || !dir_link {
+            std::fs::remove_dir_all(&root).ok();
+            return None;
+        }
 
-        root
+        Some(root)
     }
 
     #[test]
     fn for_each_file_skips_symlinks() {
-        let root = symlink_fixture("foreach");
+        let Some(root) = symlink_fixture("foreach") else {
+            return;
+        };
 
         let mut visited = Vec::new();
         let summary = for_each_file(
@@ -521,7 +524,9 @@ mod tests {
 
     #[test]
     fn directory_size_ignores_symlinks() {
-        let root = symlink_fixture("dirsize");
+        let Some(root) = symlink_fixture("dirsize") else {
+            return;
+        };
 
         // The real files total 6_000 bytes. Symlinks must not add anything,
         // and the directory symlink must not cause double-counting.
@@ -534,7 +539,9 @@ mod tests {
 
     #[test]
     fn largest_files_excludes_symlinks() {
-        let root = symlink_fixture("largest-symlink");
+        let Some(root) = symlink_fixture("largest-symlink") else {
+            return;
+        };
         let options = ScanOptions::default();
 
         let top = largest_files(&root, 10, &options, &CancelToken::default(), |_, _, _| {});

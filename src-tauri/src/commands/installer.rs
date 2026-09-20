@@ -72,7 +72,7 @@ pub async fn scan_installers(roots: Option<Vec<String>>) -> Result<InstallerScan
     };
 
     // Installed app names, used to flag an installer as already applied.
-    let installed = installed_app_names();
+    let installed = super::uninstall::installed_names();
 
     let mut installers = Vec::new();
     let mut total_size = 0u64;
@@ -169,6 +169,7 @@ pub async fn remove_installers(paths: Vec<String>, permanent: bool) -> Result<Cl
 }
 
 /// Detach volumes that were mounted from a disk image.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn detach_mounted_images() -> Result<Vec<String>> {
     let info = super::run_tool("hdiutil", &["info", "-plist"])?;
@@ -210,20 +211,92 @@ pub async fn detach_mounted_images() -> Result<Vec<String>> {
     Ok(detached)
 }
 
-/// Lowercased names of installed apps, without the `.app` suffix.
-fn installed_app_names() -> Vec<String> {
-    super::uninstall::application_roots()
-        .iter()
-        .filter_map(|root| std::fs::read_dir(root).ok())
-        .flat_map(|entries| entries.filter_map(std::result::Result::ok))
-        .map(|entry| entry.path())
-        .filter(|path| format::extension(path) == "app")
-        .map(|path| {
-            format::file_name(&path)
-                .trim_end_matches(".app")
-                .to_lowercase()
-        })
+/// Detach mounted images on Windows, which appear as virtual optical drives.
+/// Ejecting such a drive is exactly what Explorer's "Eject" does; a physical
+/// optical drive cannot be told apart from a mounted image, so its disc is
+/// ejected as well. Drives that refuse (busy, or empty) are skipped.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn detach_mounted_images() -> Result<Vec<String>> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, GetDriveTypeW, GetLogicalDrives, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::IOCTL_STORAGE_EJECT_MEDIA;
+
+    /// `GetDriveTypeW`'s answer for an optical drive.
+    const DRIVE_CDROM: u32 = 5;
+
+    let mut detached = Vec::new();
+
+    for root in drive_roots(unsafe { GetLogicalDrives() }) {
+        let letter = nul_terminated(&root);
+        // `GetDriveTypeW` takes the drive root, while `CreateFileW` opens the
+        // device of that drive.
+        let device = nul_terminated(&format!("\\\\.\\{root}"));
+
+        // SAFETY: both buffers are NUL-terminated and outlive the calls; the
+        // handle is closed below.
+        unsafe {
+            if GetDriveTypeW(PCWSTR(letter.as_ptr())) != DRIVE_CDROM {
+                continue;
+            }
+
+            // The documented open for a CD-ROM device; read-only access is
+            // enough when the drive refuses write access.
+            let handle = CreateFileW(
+                PCWSTR(device.as_ptr()),
+                (GENERIC_READ | GENERIC_WRITE).0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            .or_else(|_| {
+                CreateFileW(
+                    PCWSTR(device.as_ptr()),
+                    GENERIC_READ.0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            });
+
+            let Ok(handle) = handle else { continue };
+
+            if DeviceIoControl(handle, IOCTL_STORAGE_EJECT_MEDIA, None, 0, None, 0, None, None)
+                .is_ok()
+            {
+                detached.push(root);
+            }
+
+            let _ = CloseHandle(handle);
+        }
+    }
+
+    Ok(detached)
+}
+
+/// The drive roots whose bit is set in a `GetLogicalDrives` mask, as `D:`.
+/// Split out so the bitmask decoding can be tested without any drives.
+#[cfg(target_os = "windows")]
+fn drive_roots(mask: u32) -> Vec<String> {
+    (0..26)
+        .filter(|bit| mask & (1 << bit) != 0)
+        .map(|bit| format!("{}:", (b'A' + bit as u8) as char))
         .collect()
+}
+
+/// A UTF-16 buffer with the terminating NUL that the `W` APIs expect.
+#[cfg(target_os = "windows")]
+fn nul_terminated(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Pair `Acme-2.1.dmg` with an installed `Acme.app`.
@@ -300,6 +373,12 @@ fn classify(path: &Path) -> Option<InstallerKind> {
         "zip" => Some(InstallerKind::Zip),
         "iso" | "cdr" => Some(InstallerKind::Iso),
         "tar" | "gz" | "xz" | "bz2" => Some(InstallerKind::AppArchive),
+        // Windows installers. They share the `Pkg` kind, which keeps the
+        // badge and the filter row identical to the macOS side.
+        #[cfg(target_os = "windows")]
+        "exe" | "msi" | "msix" | "appx" | "appxbundle" | "msixbundle" | "msu" => {
+            Some(InstallerKind::Pkg)
+        }
         _ => None,
     }
 }
@@ -329,6 +408,32 @@ mod tests {
         assert_eq!(classify(Path::new("/a/Plain.zip")), Some(InstallerKind::Zip));
         assert_eq!(classify(Path::new("/a/notes.txt")), None);
         assert_eq!(classify(Path::new("/a/Photos")), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn classifies_windows_installers() {
+        assert_eq!(
+            classify(Path::new(r"C:\Users\me\Downloads\Docker Desktop Installer.exe")),
+            Some(InstallerKind::Pkg)
+        );
+        assert_eq!(
+            classify(Path::new(r"C:\Users\me\Downloads\Tool.msi")),
+            Some(InstallerKind::Pkg)
+        );
+        assert_eq!(
+            classify(Path::new(r"C:\Users\me\Downloads\Bundle.MSIXBUNDLE")),
+            Some(InstallerKind::Pkg)
+        );
+        assert_eq!(classify(Path::new(r"C:\Users\me\Downloads\photo.png")), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn decodes_the_logical_drive_mask() {
+        // Bits 2 (C:) and 3 (D:) set.
+        assert_eq!(drive_roots(0b1100), vec!["C:", "D:"]);
+        assert!(drive_roots(0).is_empty());
     }
 
     #[test]

@@ -1,17 +1,22 @@
 //! Docker Cleanup — reclaim disk space from Docker images, containers,
 //! volumes and build cache by talking to the Docker Engine API over its
-//! unix socket (via the system curl binary — no docker CLI required).
+//! local endpoint: the unix socket on macOS (via the system curl binary)
+//! and the named pipe on Windows — no docker CLI required either way.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 use std::collections::HashSet;
+
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use tauri::{AppHandle, Emitter};
 
 use super::CleanOutcome;
 use crate::scanner::ScanProgress;
 use crate::utils::history;
+#[cfg(target_os = "windows")]
+use crate::utils::permissions;
 use crate::utils::{WindleError, Result};
 
 pub const PROGRESS_EVENT: &str = "docker://progress";
@@ -20,8 +25,19 @@ pub const PROGRESS_EVENT: &str = "docker://progress";
 /// build-cache details, prune filters) exists in 1.43, and every Docker
 /// Desktop from the last three years speaks it.
 const API: &str = "v1.43";
+
+#[cfg(target_os = "macos")]
 const CURL: &str = "/usr/bin/curl";
+#[cfg(target_os = "macos")]
 const DOCKER_APP: &str = "/Applications/Docker.app";
+
+/// Docker Desktop's launchable program. The Windows edition installs
+/// machine-wide and documents this path, so there is nothing to discover.
+#[cfg(target_os = "windows")]
+const DOCKER_DESKTOP_EXE: &str = "%ProgramFiles%\\Docker\\Docker\\Docker Desktop.exe";
+/// The Engine API endpoint that Docker Desktop serves on Windows.
+#[cfg(target_os = "windows")]
+const DOCKER_PIPE: &str = r"\\.\pipe\docker_engine";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,9 +62,10 @@ struct VersionResponse {
     version: String,
 }
 
-/// Run curl against the daemon socket and return `(http_status, body)`.
+/// Run curl against the daemon unix socket and return `(http_status, body)`.
 /// `-w "\n%{http_code}"` appends the numeric status as the final line.
-fn docker_curl(socket: &str, method: &str, path_and_query: &str) -> Result<(u16, String)> {
+#[cfg(target_os = "macos")]
+fn engine_request(socket: &str, method: &str, path_and_query: &str) -> Result<(u16, String)> {
     let url = format!("http://localhost/{API}/{path_and_query}");
     let output = Command::new(CURL)
         .args([
@@ -87,7 +104,68 @@ fn docker_curl(socket: &str, method: &str, path_and_query: &str) -> Result<(u16,
     Ok((code, body))
 }
 
+/// Exchange one request with the daemon over the named pipe and return
+/// `(http_status, body)`.
+///
+/// The request is deliberately HTTP/1.0 with `Connection: close`: the Go HTTP
+/// server dockerd embeds never chunk-encodes an HTTP/1.0 response, so the
+/// body arrives as plain text delimited by the connection close — which
+/// `read_to_end` reports as EOF, because `std` maps the pipe's
+/// `ERROR_BROKEN_PIPE` to a zero-length read.
+#[cfg(target_os = "windows")]
+fn engine_request(pipe: &str, method: &str, path_and_query: &str) -> Result<(u16, String)> {
+    use std::io::{Read, Write};
+
+    let failed = |what: String, error: std::io::Error| WindleError::Command {
+        command: "docker".into(),
+        message: format!("{what}: {error}"),
+    };
+
+    let mut stream = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(pipe)
+        .map_err(|e| failed(format!("open {pipe}"), e))?;
+    stream
+        .write_all(pipe_request(method, path_and_query).as_bytes())
+        .map_err(|e| failed(format!("write {method} /{path_and_query}"), e))?;
+
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .map_err(|e| failed(format!("read {method} /{path_and_query}"), e))?;
+    parse_response(&String::from_utf8_lossy(&raw))
+}
+
+/// The exact bytes of one pipe request. Pure — unit tested.
+#[cfg(target_os = "windows")]
+fn pipe_request(method: &str, path_and_query: &str) -> String {
+    format!(
+        "{method} /{API}/{path_and_query} HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+}
+
+/// Split a raw HTTP response into `(status, body)`: the status comes from the
+/// first line (`HTTP/1.0 200 OK`), the body is everything after the blank
+/// line. Pure — unit tested.
+#[cfg(target_os = "windows")]
+fn parse_response(raw: &str) -> Result<(u16, String)> {
+    let malformed = || WindleError::Command {
+        command: "docker".into(),
+        message: "malformed HTTP response from the Docker daemon".into(),
+    };
+    let (head, body) = raw.split_once("\r\n\r\n").ok_or_else(malformed)?;
+    let code = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+        .ok_or_else(malformed)?;
+    Ok((code, body.to_string()))
+}
+
 /// Split curl stdout into `(body, http_status)`. Pure — unit tested.
+#[cfg(target_os = "macos")]
 fn split_status(raw: &str) -> (u16, String) {
     let trimmed = raw.strip_suffix('\n').unwrap_or(raw);
     match trimmed.rfind('\n') {
@@ -126,6 +204,7 @@ fn error_text(status: u16, body: &str) -> String {
 }
 
 /// Candidate daemon sockets, in probe order. Pure — unit tested.
+#[cfg(target_os = "macos")]
 fn socket_candidates(docker_host: Option<&str>, home: Option<&str>) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(path) = docker_host.and_then(|h| h.strip_prefix("unix://")) {
@@ -138,7 +217,22 @@ fn socket_candidates(docker_host: Option<&str>, home: Option<&str>) -> Vec<Strin
     out
 }
 
-/// First candidate that exists on disk and answers a cheap API call.
+/// Candidate daemon endpoints, in probe order. A `DOCKER_HOST` naming the
+/// Docker Desktop pipe wins; it is written as `npipe:////./pipe/docker_engine`,
+/// so the leading slashes are lowered to the backslashes `CreateFile` needs.
+/// Other schemes (a `tcp://` daemon) are out of scope and ignored. Pure —
+/// unit tested.
+#[cfg(target_os = "windows")]
+fn socket_candidates(docker_host: Option<&str>, _home: Option<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(path) = docker_host.and_then(|h| h.strip_prefix("npipe://")) {
+        out.push(path.replace('/', "\\"));
+    }
+    out.push(DOCKER_PIPE.to_string());
+    out
+}
+
+/// First candidate that answers a cheap API call.
 /// NOTE: `/_ping` returns 404 on newer Docker Desktop builds (Engine 29+,
 /// both versioned and unversioned), so probe `GET /version` — the most
 /// stable versioned endpoint — instead.
@@ -146,10 +240,10 @@ fn detect_socket() -> Option<String> {
     let home = dirs::home_dir().map(|p| p.display().to_string());
     let host = std::env::var("DOCKER_HOST").ok();
     for socket in socket_candidates(host.as_deref(), home.as_deref()) {
-        if !PathBuf::from(&socket).exists() {
+        if !endpoint_exists(&socket) {
             continue;
         }
-        if let Ok((code, _)) = docker_curl(&socket, "GET", "version") {
+        if let Ok((code, _)) = engine_request(&socket, "GET", "version") {
             if code == 200 {
                 return Some(socket);
             }
@@ -158,41 +252,87 @@ fn detect_socket() -> Option<String> {
     None
 }
 
-/// Probe Docker Desktop install state and daemon reachability.
+/// A unix socket is a file, so its presence can be checked before spending a
+/// request on it.
+#[cfg(target_os = "macos")]
+fn endpoint_exists(socket: &str) -> bool {
+    PathBuf::from(socket).exists()
+}
+
+/// A named pipe has no directory entry, so only the probe request can tell
+/// whether it is there; a missing pipe fails it immediately.
+#[cfg(target_os = "windows")]
+fn endpoint_exists(_pipe: &str) -> bool {
+    true
+}
+
+/// Whether Docker Desktop is present: the app bundle on macOS, the launcher
+/// under the documented install directory on Windows. Only consulted when no
+/// engine answered, to tell "not running" from "not installed".
+#[cfg(target_os = "macos")]
+fn docker_desktop_present() -> bool {
+    PathBuf::from(DOCKER_APP).exists()
+}
+
+#[cfg(target_os = "windows")]
+fn docker_desktop_present() -> bool {
+    docker_desktop_exe().is_some()
+}
+
+#[cfg(target_os = "windows")]
+fn docker_desktop_exe() -> Option<PathBuf> {
+    let exe = permissions::expand(DOCKER_DESKTOP_EXE);
+    exe.exists().then_some(exe)
+}
+
+/// Probe daemon reachability and Docker Desktop's presence. A reachable
+/// engine counts as ready no matter where it came from; otherwise Docker
+/// Desktop's presence separates "not running" from "not installed".
 #[tauri::command]
 pub async fn docker_status() -> Result<DockerStatus> {
-    if !PathBuf::from(DOCKER_APP).exists() {
+    if let Some(socket) = detect_socket() {
+        let version = engine_request(&socket, "GET", "version")
+            .ok()
+            .and_then(|(code, body)| (code == 200).then_some(body))
+            .and_then(|body| serde_json::from_str::<VersionResponse>(&body).ok())
+            .map(|v| v.version);
         return Ok(DockerStatus {
-            state: DockerEnvState::NotInstalled,
-            engine_version: None,
-            socket_path: None,
+            state: DockerEnvState::Ready,
+            engine_version: version,
+            socket_path: Some(socket),
         });
     }
-    match detect_socket() {
-        Some(socket) => {
-            let version = docker_curl(&socket, "GET", "version")
-                .ok()
-                .and_then(|(code, body)| (code == 200).then_some(body))
-                .and_then(|body| serde_json::from_str::<VersionResponse>(&body).ok())
-                .map(|v| v.version);
-            Ok(DockerStatus {
-                state: DockerEnvState::Ready,
-                engine_version: version,
-                socket_path: Some(socket),
-            })
-        }
-        None => Ok(DockerStatus {
-            state: DockerEnvState::NotRunning,
-            engine_version: None,
-            socket_path: None,
-        }),
-    }
+    Ok(DockerStatus {
+        state: if docker_desktop_present() {
+            DockerEnvState::NotRunning
+        } else {
+            DockerEnvState::NotInstalled
+        },
+        engine_version: None,
+        socket_path: None,
+    })
 }
 
 /// Launch Docker Desktop; the frontend polls `docker_status` for readiness.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn docker_start_desktop() -> Result<()> {
     super::run_tool("open", &["-a", "Docker"]).map(|_| ())
+}
+
+/// Launch Docker Desktop; the frontend polls `docker_status` for readiness.
+/// The child handle is dropped at once — Docker Desktop runs on its own.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn docker_start_desktop() -> Result<()> {
+    let exe = docker_desktop_exe().ok_or_else(|| WindleError::NotFound("Docker Desktop".into()))?;
+    std::process::Command::new(exe)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| WindleError::Command {
+            command: "Docker Desktop".into(),
+            message: e.to_string(),
+        })
 }
 
 const STOPPED_STATES: [&str; 3] = ["exited", "created", "dead"];
@@ -653,7 +793,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 
 /// Fetch both payloads needed for classification.
 fn fetch_state(socket: &str) -> Result<(SystemDfResponse, Vec<ContainerListEntry>)> {
-    let (code, body) = docker_curl(socket, "GET", "system/df")?;
+    let (code, body) = engine_request(socket, "GET", "system/df")?;
     ensure_ok(code, &body, "GET /system/df")?;
     let df: SystemDfResponse =
         serde_json::from_str(&body).map_err(|e| WindleError::Command {
@@ -661,7 +801,7 @@ fn fetch_state(socket: &str) -> Result<(SystemDfResponse, Vec<ContainerListEntry
             message: e.to_string(),
         })?;
 
-    let (code, body) = docker_curl(socket, "GET", "containers/json?all=1&size=1")?;
+    let (code, body) = engine_request(socket, "GET", "containers/json?all=1&size=1")?;
     ensure_ok(code, &body, "GET /containers/json")?;
     let containers: Vec<ContainerListEntry> =
         serde_json::from_str(&body).map_err(|e| WindleError::Command {
@@ -871,7 +1011,7 @@ pub async fn docker_clean(
     for c in &plan.containers {
         step += 1;
         emit_progress(&app, step, total, &format!("container {}", c.id));
-        match docker_curl(&socket, "DELETE", &format!("containers/{}", c.id)) {
+        match engine_request(&socket, "DELETE", &format!("containers/{}", c.id)) {
             Ok((code, _)) if (200..300).contains(&code) => {
                 outcome.removed_paths.push(c.id.clone());
             }
@@ -884,7 +1024,7 @@ pub async fn docker_clean(
     for img in &plan.images {
         step += 1;
         emit_progress(&app, step, total, &format!("image {}", img.id));
-        match docker_curl(&socket, "DELETE", &format!("images/{}", img.full_id)) {
+        match engine_request(&socket, "DELETE", &format!("images/{}", img.full_id)) {
             Ok((code, _)) if (200..300).contains(&code) => {
                 outcome.removed_paths.push(img.id.clone());
             }
@@ -897,7 +1037,7 @@ pub async fn docker_clean(
     for v in &plan.volumes {
         step += 1;
         emit_progress(&app, step, total, &format!("volume {}", v.name));
-        match docker_curl(&socket, "DELETE", &format!("volumes/{}", v.name)) {
+        match engine_request(&socket, "DELETE", &format!("volumes/{}", v.name)) {
             Ok((code, _)) if (200..300).contains(&code) => {
                 outcome.removed_paths.push(v.name.clone());
             }
@@ -912,7 +1052,7 @@ pub async fn docker_clean(
             step += 1;
             emit_progress(&app, step, total, "build cache");
             let path = build_prune_path(until);
-            match docker_curl(&socket, "POST", &path) {
+            match engine_request(&socket, "POST", &path) {
                 Ok((code, _)) if (200..300).contains(&code) => {
                     for entry in &plan.build_cache {
                         outcome.removed_paths.push(entry.id.clone());
@@ -943,6 +1083,7 @@ pub async fn docker_clean(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn split_status_parses_body_and_code() {
         assert_eq!(split_status("OK\n200").0, 200);
@@ -953,6 +1094,7 @@ mod tests {
         assert_eq!(split_status("\n204").1, "");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn socket_candidates_probe_order() {
         let c = socket_candidates(Some("unix:///tmp/custom.sock"), Some("/Users/x"));
@@ -967,8 +1109,60 @@ mod tests {
         // 非 unix:// 的 DOCKER_HOST（如 tcp://）被忽略
         let c = socket_candidates(Some("tcp://1.2.3.4:2375"), Some("/Users/x"));
         assert_eq!(c[0], "/var/run/docker.sock");
-        // 无环境变量、无 home 时仍有两个候选
+        // 无环境变量、无 home 时只剩 /var/run/docker.sock 一个候选
         assert_eq!(socket_candidates(None, None).len(), 1);
+    }
+
+    /// `npipe:////./pipe/docker_engine` 是 Docker Desktop 写进 DOCKER_HOST
+    /// 的官方形式：斜杠换反斜杠后与之等价，且排在默认管道之前。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn socket_candidates_probe_order() {
+        let c = socket_candidates(Some("npipe:////./pipe/docker_engine"), None);
+        assert_eq!(
+            c,
+            vec![r"\\.\pipe\docker_engine".to_string(), DOCKER_PIPE.to_string()]
+        );
+        // 非 npipe:// 的 DOCKER_HOST（如 tcp://）被忽略
+        let c = socket_candidates(Some("tcp://1.2.3.4:2375"), None);
+        assert_eq!(c, vec![DOCKER_PIPE.to_string()]);
+        assert_eq!(socket_candidates(None, None).len(), 1);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn pipe_request_is_http_1_0_with_close() {
+        // HTTP/1.0 + Connection: close 是响应不带 chunked 编码的前提
+        assert_eq!(
+            pipe_request("GET", "version"),
+            "GET /v1.43/version HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        );
+        assert_eq!(
+            pipe_request("POST", "build/prune?all=true"),
+            "POST /v1.43/build/prune?all=true HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parse_response_splits_status_and_body() {
+        let (code, body) = parse_response(
+            "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"a\":1}",
+        )
+        .unwrap();
+        assert_eq!(code, 200);
+        assert_eq!(body, "{\"a\":1}");
+        // 204 无 body：空行之后没有内容
+        let (code, body) = parse_response("HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+        assert_eq!((code, body.as_str()), (204, ""));
+        // 错误响应同样要取出状态码与消息体（error_text 依赖后者）
+        let (code, body) =
+            parse_response("HTTP/1.0 500 Internal Server Error\r\n\r\n{\"message\":\"boom\"}")
+                .unwrap();
+        assert_eq!(code, 500);
+        assert!(body.contains("boom"));
+        // 没有空行分隔的响应直接报错，而不是猜
+        assert!(parse_response("garbage").is_err());
     }
 
     #[test]

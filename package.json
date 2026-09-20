@@ -1,9 +1,9 @@
 {
   "name": "windle",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
-  "description": "Windle — macOS system maintenance toolkit",
+  "description": "Windle — system maintenance toolkit for macOS and Windows",
   "license": "MIT",
   "scripts": {
     "dev": "vite",

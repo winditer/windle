@@ -459,10 +459,12 @@ pub fn volumes() -> Vec<DiskUsage> {
         .collect()
 }
 
-/// The volume the system booted from, used by the dashboard gauge.
+/// The volume the system booted from, used by the dashboard gauge. On macOS
+/// that is the volume mounted at `/`, on Windows the one `%SystemDrive%` names.
 pub fn boot_volume() -> Option<DiskUsage> {
+    let boot = crate::utils::permissions::boot_mount_point();
     let mut disks = volumes();
-    disks.sort_by_key(|disk| disk.mount_point != "/");
+    disks.sort_by_key(|disk| !crate::utils::platform::eq(Path::new(&disk.mount_point), &boot));
     disks
         .into_iter()
         .find(|disk| Path::new(&disk.mount_point).exists())
@@ -474,9 +476,7 @@ mod tests {
 
     /// Tests run in parallel, so each one gets its own tree.
     fn fixture(name: &str) -> PathBuf {
-        let root =
-            PathBuf::from("/tmp").join(format!("windle-analyze-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+        let root = crate::utils::test_support::scratch(&format!("analyze-{name}"));
         std::fs::create_dir_all(root.join("a/deep")).unwrap();
         std::fs::create_dir_all(root.join("b")).unwrap();
         std::fs::write(root.join("a/one.txt"), vec![0u8; 1_000]).unwrap();
@@ -570,32 +570,35 @@ mod tests {
     }
 
     /// Fixture with a symlink to a file and a symlink to a directory, so we
-    /// can verify the analyzer never counts or follows them.
-    fn symlink_fixture(name: &str) -> PathBuf {
-        let root =
-            PathBuf::from("/tmp").join(format!("windle-analyze-symlink-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+    /// can verify the analyzer never counts or follows them. Returns `None`
+    /// when the platform will not let us create symlinks, and the caller
+    /// steps aside.
+    fn symlink_fixture(name: &str) -> Option<PathBuf> {
+        let root = crate::utils::test_support::scratch(&format!("analyze-symlink-{name}"));
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("sub/data.bin"), vec![0u8; 5_000]).unwrap();
         std::fs::write(root.join("plain.bin"), vec![0u8; 3_000]).unwrap();
 
-        std::os::unix::fs::symlink(
-            root.join("plain.bin"),
-            root.join("link_to_file"),
-        )
-        .unwrap();
-        std::os::unix::fs::symlink(
-            root.join("sub"),
-            root.join("link_to_dir"),
-        )
-        .unwrap();
+        let file_link = crate::utils::test_support::symlink_file(
+            &root.join("plain.bin"),
+            &root.join("link_to_file"),
+        );
+        let dir_link =
+            crate::utils::test_support::symlink_dir(&root.join("sub"), &root.join("link_to_dir"));
 
-        root
+        if !file_link || !dir_link {
+            std::fs::remove_dir_all(&root).ok();
+            return None;
+        }
+
+        Some(root)
     }
 
     #[test]
     fn analysis_excludes_symlinks_from_totals() {
-        let root = symlink_fixture("totals");
+        let Some(root) = symlink_fixture("totals") else {
+            return;
+        };
         let (analysis, tree) = analyse(&root, 2);
 
         // Only two real files: plain.bin (3_000) + sub/data.bin (5_000).
@@ -607,7 +610,9 @@ mod tests {
 
     #[test]
     fn build_node_excludes_symlinks_from_children() {
-        let root = symlink_fixture("buildnode");
+        let Some(root) = symlink_fixture("buildnode") else {
+            return;
+        };
         let (_, tree) = analyse(&root, 1);
 
         let children = tree.children.expect("depth 1 must have children");
@@ -628,7 +633,9 @@ mod tests {
 
     #[test]
     fn expand_node_filters_symlinks() {
-        let root = symlink_fixture("expand");
+        let Some(root) = symlink_fixture("expand") else {
+            return;
+        };
 
         let children = tauri::async_runtime::block_on(expand_node(
             root.to_string_lossy().into_owned(),

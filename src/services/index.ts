@@ -6,6 +6,7 @@ export * as installerService from "./installer";
 export * as agentService from "./agent";
 export * as monitorService from "./monitor";
 export * as menubarService from "./menubar";
+export * as platformService from "./platform";
 export * as optimizeService from "./optimize";
 export * as purgeService from "./purge";
 export * as uninstallService from "./uninstall";

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0 — 2026-09-18
+
+Windows 版本发布：功能与界面与 macOS 版一致，同一套前端代码，后端按平台分支实现。
+
+### Added
+
+- Windows 平台支持（全部 10 个模块可用）：
+  - 深度清理：12 个分类全部落地，缓存/日志/应用垃圾/浏览器缓存等按 Windows 路径展开；系统日志覆盖 `%SystemRoot%\Logs`、`Minidump`、`Temp`、WER 报告与 LiveKernelReports；开发者缓存分类扫描 NuGet / npm / pip / Yarn / cargo / gradle 与 Visual Studio 缓存
+  - 智能卸载：注册表枚举已安装程序（HKCU / HKLM / WOW6432Node 两个视图），静默调用厂商卸载程序（MSI / NSIS），随后清理残留的应用数据、开始菜单快捷方式与 `Software` 注册表项
+  - 启动项：注册表 Run 键与「启动」文件夹的读取与启用/禁用
+  - 系统优化：10 个 Windows 任务（内存回收、DNS 刷新、清理临时文件、清理 Windows Update 缓存、重建搜索索引、刷新图标缓存、SFC 系统文件校验、DISM 系统映像修复、系统盘 TRIM/碎片整理、系统盘检查），其中 7 个需要提升权限
+  - 安装包清理：识别 `.exe` / `.msi` / `.msix` / `.appx` / `.msu`；挂载镜像弹出改为对虚拟光驱发送 eject IOCTL
+  - Docker 清理：通过 `\\.\pipe\docker_engine` 命名管道直连 Docker Engine API（`DOCKER_HOST` 支持 `npipe://`）
+  - 窗口与托盘：无边框窗口 + 界面内自绘的最小化 / 最大化 / 关闭按钮（46px 宽、悬停高亮、关闭按钮红色），标题栏区域可拖拽、双击最大化；单实例运行与系统托盘
+- 权限守卫的 Windows 等价实现（`utils/permissions/windows.rs`）：
+  - 19 个系统前缀保护（`%SystemRoot%`、`%ProgramFiles%`、`%ProgramData%\Microsoft\Crypto` 等）与 26 个只允许清空的目录（用户主目录、`AppData` 容器、`~\.ssh`、`~\.aws` 等）
+  - 10 个豁免子树的严格后代可清理（`%SystemRoot%\Temp`、`SoftwareDistribution\Download` 等），子树根目录本身仍受保护
+  - 路径比较大小写不敏感、剥离 canonicalize 产生的 `\\?\` 前缀，杜绝大小写与前缀变体绕过
+  - 无 TCC 类权限：完全磁盘访问总是「已授权」；受 UAC 保护的位置由 `needs_elevation` 判定并提示提升
+- 前端平台适配：`platform_info` 命令 + 首帧渲染前解析平台；Windows 下窗口按钮、拖拽区域与部分文案（`${key}.windows` 覆盖机制）自动切换
+- CI：`.github/workflows/windows-build.yml`（windows-latest 上执行类型检查、`cargo test`、构建 NSIS 安装包并上传产物）
+- `scripts/check-windows.mjs`：在 macOS 上以 `cargo check --target x86_64-pc-windows-msvc --all-targets` 交叉检查 Windows 代码路径
+
+### Changed
+
+- 后端按平台拆分：`commands/clean`、`commands/uninstall`、`commands/optimize` 与 `utils/permissions` 拆为 `mod.rs` + `macos.rs` + `windows.rs`，共享逻辑与命令签名保持不变
+- Tauri 配置拆分：`tauri.macos.conf.json`（Overlay 标题栏、`.app` / `.dmg`）与 `tauri.windows.conf.json`（无边框窗口、NSIS、中英文安装界面）
+- macOS 行为保持不变：窗口 chrome、文案与守卫逻辑均按平台分支，macOS 侧渲染结果与 0.5.0 一致
+
 ## 0.5.0 — 2026-09-15
 
 ### Fixed

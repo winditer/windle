@@ -4,6 +4,7 @@ import type {
   DashboardSummary,
   ModuleId,
   PermissionState,
+  Platform,
   ProgressEvent,
   TaskStatus,
 } from "@/types";
@@ -44,6 +45,8 @@ interface AppState {
   /* Shared data */
   summary: DashboardSummary | null;
   permissions: PermissionState;
+  /** Which OS the backend runs on; drives window chrome and wording. */
+  platform: Platform | null;
   lastError: AppError | null;
 
   /** Bytes reclaimed during this session, shown in the sidebar footer. */
@@ -57,6 +60,7 @@ interface AppState {
   setProgress: (progress: ProgressEvent | null) => void;
   setSummary: (summary: DashboardSummary | null) => void;
   setPermissions: (permissions: PermissionState) => void;
+  setPlatform: (platform: Platform) => void;
   setError: (error: AppError | null) => void;
   addFreedBytes: (bytes: number) => void;
   resetTask: () => void;
@@ -72,6 +76,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   summary: null,
   permissions: { fullDiskAccess: false, adminAuthorized: false },
+  platform: null,
   lastError: null,
 
   freedThisSession: 0,
@@ -104,6 +109,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProgress: (progress) => set({ progress }),
   setSummary: (summary) => set({ summary }),
   setPermissions: (permissions) => set({ permissions }),
+  setPlatform: (platform) => set({ platform }),
   setError: (lastError) =>
     set({ lastError, ...(lastError ? { status: "error" as TaskStatus } : {}) }),
 
@@ -123,3 +129,4 @@ export const useAppStore = create<AppState>((set) => ({
 export const selectActiveModule = (state: AppState) => state.activeModule;
 export const selectStatus = (state: AppState) => state.status;
 export const selectProgress = (state: AppState) => state.progress;
+export const selectIsWindows = (state: AppState) => state.platform === "windows";

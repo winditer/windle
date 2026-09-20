@@ -8,6 +8,9 @@ use serde::Serialize;
 use sysinfo::{Components, Networks, ProcessesToUpdate, System, Users};
 use tauri::{AppHandle, Emitter, State};
 
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Power::SYSTEM_POWER_STATUS;
+
 use crate::utils::{format, WindleError, Result};
 
 pub const SNAPSHOT_EVENT: &str = "monitor://snapshot";
@@ -16,8 +19,8 @@ pub const SNAPSHOT_EVENT: &str = "monitor://snapshot";
 /// figures mean anything.
 const MIN_CPU_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Shelling out to `pmset`/`ioreg` every second would be wasteful, so battery
-/// readings are cached for this long.
+/// Battery readings change slowly, and on macOS obtaining one means shelling
+/// out to `pmset`/`ioreg` — so they are cached for this long.
 const BATTERY_TTL: Duration = Duration::from_secs(10);
 
 /// How many processes a snapshot carries.
@@ -493,7 +496,14 @@ pub async fn kill_process(pid: u32, force: bool) -> Result<()> {
         return Err(WindleError::Protected(format!("pid {pid}")));
     }
 
+    terminate(pid, force)
+}
+
+/// `SIGTERM`, or `SIGKILL` when forced, through `kill(1)`.
+#[cfg(target_os = "macos")]
+fn terminate(pid: u32, force: bool) -> Result<()> {
     let signal = if force { "-KILL" } else { "-TERM" };
+
     super::run_tool("kill", &[signal, &pid.to_string()])
         .map(|_| ())
         .map_err(|error| match error {
@@ -504,6 +514,48 @@ pub async fn kill_process(pid: u32, force: bool) -> Result<()> {
             }
             other => other,
         })
+}
+
+/// Windows has no signals. A graceful stop is the `WM_CLOSE` that `taskkill`
+/// posts; a forced one terminates the process through the kernel.
+#[cfg(target_os = "windows")]
+fn terminate(pid: u32, force: bool) -> Result<()> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    // Opening the process doubles as the permission probe: its error codes are
+    // language-independent, unlike the messages `taskkill` prints.
+    let process = match unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
+        Ok(handle) => handle,
+        Err(error) => {
+            return Err(match error.code().0 as u32 {
+                // ERROR_INVALID_PARAMETER — no process with that id.
+                87 => WindleError::NotFound(format!("pid {pid}")),
+                // ERROR_ACCESS_DENIED — owned by another user, or elevated.
+                5 => WindleError::NeedsElevation(format!("killing pid {pid}")),
+                _ => WindleError::Command {
+                    command: "OpenProcess".into(),
+                    message: error.message(),
+                },
+            });
+        }
+    };
+
+    let result = if force {
+        // SAFETY: the handle grants PROCESS_TERMINATE and is closed below.
+        unsafe { TerminateProcess(process, 1) }.map_err(|error| WindleError::Command {
+            command: "TerminateProcess".into(),
+            message: error.message(),
+        })
+    } else {
+        // Console programs refuse an unforced `taskkill`, which leaves them to
+        // the force path — the same way a process may ignore `SIGTERM`.
+        super::run_tool("taskkill", &["/PID", &pid.to_string()]).map(|_| ())
+    };
+
+    // SAFETY: the handle was opened above and is closed exactly once.
+    let _ = unsafe { CloseHandle(process) };
+    result
 }
 
 /// Read every metric with a freshly built sampler. Used by the dashboard, which
@@ -756,6 +808,7 @@ fn read_fan_speed_rpm() -> Option<f32> {
 
 /// Battery level and charge state from `pmset`, enriched with the cycle count
 /// and health that only `ioreg` reports. Returns `None` on a desktop Mac.
+#[cfg(target_os = "macos")]
 fn read_battery() -> Option<BatteryStats> {
     let output = super::run_tool("pmset", &["-g", "batt"]).ok()?;
     let line = output.lines().find(|line| line.contains('%'))?;
@@ -793,6 +846,7 @@ fn read_battery() -> Option<BatteryStats> {
 }
 
 /// `pmset` reports the estimate as `H:MM`; `0:00` means "still calculating".
+#[cfg(target_os = "macos")]
 fn parse_remaining_minutes(part: &str) -> Option<u32> {
     let clock = part.split_whitespace().find(|token| token.contains(':'))?;
     let (hours, minutes) = clock.split_once(':')?;
@@ -802,6 +856,7 @@ fn parse_remaining_minutes(part: &str) -> Option<u32> {
 }
 
 /// Cycle count and health from the SMC's IORegistry entry.
+#[cfg(target_os = "macos")]
 fn read_battery_health() -> (Option<u32>, Option<f32>) {
     let Ok(output) = super::run_tool("ioreg", &["-rc", "AppleSmartBattery"]) else {
         return (None, None);
@@ -824,6 +879,7 @@ fn read_battery_health() -> (Option<u32>, Option<f32>) {
 }
 
 /// Pull `"Key" = 123` out of `ioreg` output.
+#[cfg(target_os = "macos")]
 fn ioreg_number(output: &str, key: &str) -> Option<i64> {
     let needle = format!("\"{key}\"");
 
@@ -833,6 +889,60 @@ fn ioreg_number(output: &str, key: &str) -> Option<i64> {
             return None;
         }
         line.split('=').nth(1)?.trim().parse::<i64>().ok()
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Battery reading on Windows, straight from the power status the OS keeps in
+// memory. There is no `ioreg` equivalent for cycle count and health.
+// ---------------------------------------------------------------------------
+
+/// `BatteryFlag` bit 3: the battery is charging.
+#[cfg(target_os = "windows")]
+const BATTERY_CHARGING: u8 = 0x08;
+
+/// `BatteryFlag` bit 7: the machine has no system battery. Set on desktops.
+#[cfg(target_os = "windows")]
+const BATTERY_NO_SYSTEM: u8 = 0x80;
+
+/// `BatteryLifeTime` uses this value for "still calculating".
+#[cfg(target_os = "windows")]
+const BATTERY_TIME_UNKNOWN: u32 = u32::MAX;
+
+/// Battery reading from the power status the OS maintains in memory. Returns
+/// `None` on a desktop, where the API reports no system battery.
+#[cfg(target_os = "windows")]
+fn read_battery() -> Option<BatteryStats> {
+    use windows::Win32::System::Power::GetSystemPowerStatus;
+
+    let mut status = SYSTEM_POWER_STATUS::default();
+    // SAFETY: the call only fills the plain-data struct it is handed.
+    unsafe { GetSystemPowerStatus(&mut status) }.ok()?;
+
+    battery_from_status(&status)
+}
+
+/// Split from the API call so the mapping itself is testable.
+#[cfg(target_os = "windows")]
+fn battery_from_status(status: &SYSTEM_POWER_STATUS) -> Option<BatteryStats> {
+    // 255 in `BatteryLifePercent` means the level is not known yet.
+    if status.BatteryFlag & BATTERY_NO_SYSTEM != 0 || status.BatteryLifePercent > 100 {
+        return None;
+    }
+
+    // Under a minute reads as unknown, the rule the `pmset` parser applies to
+    // its `0:00` as well.
+    let time_remaining_minutes = (status.BatteryLifeTime < BATTERY_TIME_UNKNOWN)
+        .then_some(status.BatteryLifeTime / 60)
+        .filter(|minutes| *minutes > 0);
+
+    Some(BatteryStats {
+        level: status.BatteryLifePercent as f32 / 100.0,
+        is_charging: status.BatteryFlag & BATTERY_CHARGING != 0,
+        // Not exposed to ordinary processes on Windows.
+        cycle_count: None,
+        health_percent: None,
+        time_remaining_minutes,
     })
 }
 
@@ -847,6 +957,7 @@ mod tests {
         assert_eq!(per_second(0, 0.5), 0);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_ioreg_numbers() {
         let output = "    \"CycleCount\" = 142\n    \"DesignCapacity\" = 4790\n";
@@ -856,11 +967,45 @@ mod tests {
         assert_eq!(ioreg_number(output, "Missing"), None);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_the_pmset_time_estimate() {
         assert_eq!(parse_remaining_minutes(" 3:25 remaining present: true"), Some(205));
         // Still calculating.
         assert_eq!(parse_remaining_minutes(" 0:00 remaining present: true"), None);
+    }
+
+    /// Runs on Windows CI: the mapping from the power status the OS reports to
+    /// the stats the UI renders.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn battery_status_maps_to_stats() {
+        let status = |flag: u8, percent: u8, seconds: u32| SYSTEM_POWER_STATUS {
+            ACLineStatus: u8::from(flag & BATTERY_CHARGING == 0),
+            BatteryFlag: flag,
+            BatteryLifePercent: percent,
+            SystemStatusFlag: 0,
+            BatteryLifeTime: seconds,
+            BatteryFullLifeTime: 0,
+        };
+
+        // On battery at 82%, 90 minutes left.
+        let stats = battery_from_status(&status(0x01, 82, 5_400)).unwrap();
+        assert_eq!(stats.level, 0.82);
+        assert!(!stats.is_charging);
+        assert_eq!(stats.time_remaining_minutes, Some(90));
+
+        // Plugged in and charging.
+        assert!(battery_from_status(&status(0x08, 50, 600)).unwrap().is_charging);
+
+        // A desktop has no battery to show.
+        assert!(battery_from_status(&status(0x80, 255, u32::MAX)).is_none());
+        // 255 is also the "level not yet known" sentinel.
+        assert!(battery_from_status(&status(0x01, 255, u32::MAX)).is_none());
+
+        // A real level with an unknown time estimate.
+        let stats = battery_from_status(&status(0x01, 40, u32::MAX)).unwrap();
+        assert_eq!(stats.time_remaining_minutes, None);
     }
 
     #[test]

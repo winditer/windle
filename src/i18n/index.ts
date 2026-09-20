@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useAppStore } from "@/stores/appStore";
 import { translations, type Lang, type TranslationKey } from "./translations";
 
 const STORAGE_KEY = "windle-lang";
@@ -36,6 +37,7 @@ function getInitialLang(): Lang {
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(getInitialLang);
+  const platform = useAppStore((state) => state.platform);
 
   const setLang = useCallback((next: Lang) => {
     setLangState(next);
@@ -61,7 +63,11 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) => {
       const dict = translations[lang] as Record<string, string>;
-      let str: string = dict[key] ?? key;
+      // Platform overrides: a `${key}.windows` entry replaces the base string
+      // on Windows ("Recycle Bin" for Trash, "managed by Windows", …). Keys
+      // without an override fall back to the base translation.
+      const override = platform === "windows" ? dict[`${key}.windows`] : undefined;
+      let str: string = override ?? dict[key] ?? key;
       if (params) {
         for (const [name, value] of Object.entries(params)) {
           str = str.replace(`{${name}}`, String(value));
@@ -69,7 +75,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       }
       return str;
     },
-    [lang],
+    [lang, platform],
   );
 
   const value = useMemo<LanguageContextValue>(

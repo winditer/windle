@@ -19,6 +19,9 @@ export type ModuleId =
 /** Long-running scan/clean lifecycle. */
 export type TaskStatus = "idle" | "scanning" | "ready" | "running" | "done" | "error";
 
+/** The operating systems the backend can report via `platform_info`. */
+export type Platform = "macos" | "windows" | "linux";
+
 /** How risky it is to delete something. */
 export type RiskLevel = "safe" | "caution" | "danger";
 
@@ -269,12 +272,22 @@ export interface OptimizeProgress {
 export type OptimizeTaskId =
   | "purge-memory"
   | "flush-dns"
+  // macOS-only tasks.
   | "rebuild-spotlight"
   | "rebuild-launch-services"
   | "reset-dock"
   | "clear-quicklook"
   | "run-maintenance-scripts"
-  | "verify-disk";
+  | "verify-disk"
+  // Windows-only tasks.
+  | "clear-temp-files"
+  | "clear-update-cache"
+  | "rebuild-search-index"
+  | "reset-icon-cache"
+  | "verify-system-files"
+  | "repair-system-image"
+  | "optimize-system-drive"
+  | "check-system-drive";
 
 export interface OptimizeTask {
   id: OptimizeTaskId;
@@ -290,7 +303,12 @@ export interface LoginItem {
   id: string;
   label: string;
   path: string;
-  kind: "launch-agent" | "launch-daemon" | "login-item";
+  kind:
+    | "launch-agent"
+    | "launch-daemon"
+    | "login-item"
+    | "run-key"
+    | "startup-folder";
   enabled: boolean;
   isSystem: boolean;
 }

@@ -2,6 +2,10 @@ pub mod format;
 pub mod fs_ops;
 pub mod history;
 pub mod permissions;
+pub mod platform;
+
+#[cfg(test)]
+pub mod test_support;
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
@@ -15,7 +19,18 @@ pub enum WindleError {
     #[error("path not found: {0}")]
     NotFound(String),
 
-    #[error("access denied: {0} — Full Disk Access may be required")]
+    #[cfg_attr(
+        target_os = "macos",
+        error("access denied: {0} — Full Disk Access may be required")
+    )]
+    #[cfg_attr(
+        target_os = "windows",
+        error("access denied: {0} — it may be in use, or owned by another user")
+    )]
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        error("access denied: {0}")
+    )]
     AccessDenied(String),
 
     #[error("refused to touch protected path: {0}")]

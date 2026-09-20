@@ -1,21 +1,12 @@
-//! Permission checks and the guard rails that keep Windle from deleting
-//! something it should not.
+//! macOS specifics: Full Disk Access, `geteuid`, and the system prefixes that
+//! must never be touched.
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-use super::{WindleError, Result};
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionState {
-    pub full_disk_access: bool,
-    pub admin_authorized: bool,
-}
+use super::{home_dir, WindleError, Result};
 
 /// Whole subtrees that must never be removed, no matter what a scanner reports.
-const PROTECTED_PREFIXES: [&str; 15] = [
+pub const PROTECTED_PREFIXES: &[&str] = &[
     "/System",
     "/bin",
     "/sbin",
@@ -37,7 +28,7 @@ const PROTECTED_PREFIXES: [&str; 15] = [
 
 /// Directories we may empty but must never delete outright. Stored relative to
 /// `$HOME` when the entry starts with `~`, absolute otherwise.
-const PROTECTED_EXACT: [&str; 32] = [
+pub const PROTECTED_EXACT: &[&str] = &[
     "/",
     "/Applications",
     "/Applications/Utilities",
@@ -83,7 +74,7 @@ const PROTECTED_EXACT: [&str; 32] = [
 /// logd log data, and deleting a listed directory entry (`remove_dir_all`)
 /// never re-checks the guard for the files inside it, so restricting the guard
 /// to a particular depth would add no extra safety.
-const EXEMPTED_SUBTREES: [&str; 1] = ["/private/var/db/diagnostics"];
+pub const EXEMPTED_SUBTREES: &[&str] = &["/private/var/db/diagnostics"];
 
 /// Probing a directory that is only readable with Full Disk Access tells us
 /// whether the user has granted it.
@@ -97,14 +88,6 @@ pub fn has_full_disk_access() -> bool {
             std::fs::File::open("/Library/Application Support/com.apple.TCC/TCC.db").is_ok()
         }
         Err(_) => false,
-    }
-}
-
-/// Current permission snapshot for the dashboard banner.
-pub fn state() -> PermissionState {
-    PermissionState {
-        full_disk_access: has_full_disk_access(),
-        admin_authorized: is_root(),
     }
 }
 
@@ -128,14 +111,14 @@ pub fn open_settings_pane(anchor: &str) -> Result<()> {
     }
 }
 
-pub fn is_root() -> bool {
+pub fn is_elevated() -> bool {
     // SAFETY: `geteuid` is always safe to call and cannot fail.
     unsafe { libc_geteuid() == 0 }
 }
 
 /// Effective user id, needed to address per-user `launchctl` domains.
 pub fn current_uid() -> u32 {
-    // SAFETY: see `is_root`.
+    // SAFETY: see `is_elevated`.
     unsafe { libc_geteuid() }
 }
 
@@ -145,108 +128,19 @@ extern "C" {
     fn libc_geteuid() -> u32;
 }
 
-pub fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
-}
-
-/// Expand a leading `~` against the current home directory.
-pub fn expand_tilde(entry: &str) -> PathBuf {
-    match entry.strip_prefix('~') {
-        Some("") => home_dir(),
-        Some(rest) => home_dir().join(rest.trim_start_matches('/')),
-        None => PathBuf::from(entry),
-    }
-}
-
-/// True when `path` is one of the directories we are only allowed to empty.
-pub fn is_protected(path: &Path) -> bool {
-    let resolved = resolve(path);
-
-    // A strict-descendant check — the exempted root itself is excluded, while
-    // every deeper path below it passes. The subtree root (whose parent is
-    // the protected prefix) stays protected. Deeper descendants are allowed
-    // because the scanner offers individual archived files inside the subtree,
-    // and deleting a listed directory never re-checks the guard for its
-    // contents, so limiting the depth would add no safety.
-    let exempted = EXEMPTED_SUBTREES
-        .iter()
-        .any(|root| resolved != Path::new(root) && resolved.starts_with(root));
-
-    if !exempted
-        && PROTECTED_PREFIXES
-            .iter()
-            .any(|prefix| resolved.starts_with(prefix))
-    {
-        return true;
-    }
-
-    PROTECTED_EXACT
-        .iter()
-        .any(|entry| resolved == expand_tilde(entry))
-}
-
-/// Resolve symlinks where possible so a link cannot point us at a protected
-/// location. Falls back to the literal path when it no longer exists.
-fn resolve(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// Reject anything that is not a concrete, non-protected path we are willing to
-/// delete. Every removal in Windle goes through this first.
-pub fn ensure_removable(path: &Path) -> Result<()> {
-    let display = path.to_string_lossy().into_owned();
-
-    if !path.is_absolute() {
-        return Err(WindleError::Protected(display));
-    }
-
-    // A `..` component could climb out of an otherwise safe subtree.
-    if path
-        .components()
-        .any(|part| matches!(part, std::path::Component::ParentDir))
-    {
-        return Err(WindleError::Protected(display));
-    }
-
-    let resolved = resolve(path);
-
-    // The filesystem root has no parent; nothing else should reach this.
-    if resolved.parent().is_none() {
-        return Err(WindleError::Protected(display));
-    }
-
-    if is_protected(&resolved) {
-        return Err(WindleError::Protected(display));
-    }
-
-    Ok(())
-}
-
-/// Whether removing `path` will need an admin prompt.
+/// Any path outside the home directory needs an admin prompt to remove.
 pub fn needs_elevation(path: &Path) -> bool {
     !path.starts_with(home_dir())
 }
 
-/// Map an I/O error to the richer Windle variant, so the UI can suggest granting
-/// Full Disk Access instead of showing a bare "permission denied".
-pub fn classify_io_error(path: &Path, error: &std::io::Error) -> WindleError {
-    let display = path.to_string_lossy().into_owned();
-
-    match error.kind() {
-        std::io::ErrorKind::NotFound => WindleError::NotFound(display),
-        std::io::ErrorKind::PermissionDenied => {
-            if needs_elevation(path) {
-                WindleError::NeedsElevation(display)
-            } else {
-                WindleError::AccessDenied(display)
-            }
-        }
-        _ => WindleError::AccessDenied(display),
-    }
+/// Kept for the analyzer's boot-volume pick.
+pub fn boot_mount_point() -> PathBuf {
+    PathBuf::from("/")
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ensure_removable, home_dir};
     use super::*;
 
     #[test]
@@ -278,12 +172,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_relative_and_climbing_paths() {
-        assert!(ensure_removable(Path::new("Library/Caches")).is_err());
-        assert!(ensure_removable(Path::new("/tmp/../System")).is_err());
-    }
-
-    #[test]
     fn strict_descendants_of_exempted_subtrees_are_removable() {
         // The archived unified-log directories directly under
         // `/private/var/db/diagnostics` may be offered for deletion …
@@ -307,5 +195,11 @@ mod tests {
         // the component-level semantics of `Path::starts_with`, so a future
         // refactor to a plain string-prefix comparison fails here.
         assert!(ensure_removable(Path::new("/private/var/db/diagnosticsfoo")).is_err());
+    }
+
+    #[test]
+    fn home_directories_need_no_elevation() {
+        assert!(!needs_elevation(&home_dir().join("Library/Caches")));
+        assert!(needs_elevation(Path::new("/Library/Caches")));
     }
 }
