@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn canonical_resolves_existing_paths() {
-        let resolved = canonical(Path::new("/tmp"));
+        let resolved = canonical(&std::env::temp_dir());
         assert!(resolved.is_absolute());
         assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
     }
