@@ -3,17 +3,23 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import App from "./App";
 import { MenuBarApp } from "@/components/menubar/MenuBarApp";
+import { FloatingWidget } from "@/components/floating/FloatingWidget";
 import { LanguageProvider } from "@/i18n";
 import { getPlatform } from "@/services/platform";
 import { useAppStore } from "@/stores/appStore";
 import "./styles/globals.css";
 
-let isMenuBar = false;
+/** Which window this bundle is rendering into; `main` unless told otherwise. */
+let label = "main";
 try {
-  isMenuBar = getCurrentWebviewWindow().label === "menubar";
+  label = getCurrentWebviewWindow().label;
 } catch {
-  // Fallback to main app if Tauri not yet injected
+  // Fallback to the main app if Tauri is not injected yet.
 }
+
+// Transparent windows paint their own shapes, so the page behind them has to
+// stay clear (see `globals.css`).
+document.documentElement.dataset.window = label;
 
 // The interface swaps window chrome and wording per platform, so the platform
 // is resolved before the first paint; `getPlatform` always settles (falling
@@ -25,7 +31,13 @@ void getPlatform()
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <LanguageProvider>
-          {isMenuBar ? <MenuBarApp /> : <App />}
+          {label === "menubar" ? (
+            <MenuBarApp />
+          ) : label === "floating" ? (
+            <FloatingWidget />
+          ) : (
+            <App />
+          )}
         </LanguageProvider>
       </React.StrictMode>,
     );

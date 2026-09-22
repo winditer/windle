@@ -2,14 +2,24 @@ import {
   createElement,
   createContext,
   useCallback,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { useAppStore } from "@/stores/appStore";
+import { subscribe } from "@/services/ipc";
 import { translations, type Lang, type TranslationKey } from "./translations";
 
 const STORAGE_KEY = "windle-lang";
+
+/**
+ * Broadcast whenever the language changes. The widget and the status bar are
+ * windows of their own, each holding its own copy of this state; without this
+ * they would keep the language they loaded with.
+ */
+const LANG_EVENT = "windle://lang";
 
 export interface LanguageContextValue {
   lang: Lang;
@@ -35,30 +45,53 @@ function getInitialLang(): Lang {
   return "zh-CN";
 }
 
+function isLang(value: unknown): value is Lang {
+  return value === "zh-CN" || value === "en-US";
+}
+
+/** Remember the choice and tell the other windows about it. */
+function applyLang(next: Lang) {
+  try {
+    localStorage.setItem(STORAGE_KEY, next);
+  } catch {
+    // Ignore write errors.
+  }
+  void emit(LANG_EVENT, next).catch(() => {});
+}
+
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(getInitialLang);
   const platform = useAppStore((state) => state.platform);
 
+  // Another window changed the language: follow it. The event carries the
+  // choice itself, so no window has to guess which one is authoritative.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    subscribe<Lang>(LANG_EVENT, (next) => {
+      if (isLang(next)) setLangState(next);
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const setLang = useCallback((next: Lang) => {
     setLangState(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Ignore write errors.
-    }
+    applyLang(next);
   }, []);
 
   const toggleLang = useCallback(() => {
-    setLangState((prev) => {
-      const next: Lang = prev === "zh-CN" ? "en-US" : "zh-CN";
-      try {
-        localStorage.setItem(STORAGE_KEY, next);
-      } catch {
-        // Ignore write errors.
-      }
-      return next;
-    });
-  }, []);
+    setLang(lang === "zh-CN" ? "en-US" : "zh-CN");
+  }, [lang, setLang]);
 
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) => {

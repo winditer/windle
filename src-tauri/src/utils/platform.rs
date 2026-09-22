@@ -93,6 +93,22 @@ pub fn env_path(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// The directory Windle keeps its own small state files in: `%LOCALAPPDATA%`
+/// on Windows — machine-specific state that should not roam — and
+/// `~/Library/Application Support` on macOS.
+pub fn app_support_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        env_path("LOCALAPPDATA")
+            .unwrap_or_else(|| super::permissions::home_dir().join("AppData/Local"))
+            .join("Windle")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        super::permissions::home_dir().join("Library/Application Support/Windle")
+    }
+}
+
 /// Whether a component is a Windows drive or UNC prefix, used by the display
 /// helpers to keep the root of a path intact when eliding.
 pub fn is_root_component(component: &Component<'_>) -> bool {

@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::format;
-use crate::utils::permissions;
 
 /// Older entries are dropped: this is a recent-activity list, not an audit log.
 const MAX_ENTRIES: usize = 50;
@@ -54,18 +53,7 @@ impl History {
 
 /// Where the log lives.
 pub fn path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        // `%LOCALAPPDATA%` is where Windows apps keep machine-specific state
-        // that should not roam with the user's profile.
-        let base = crate::utils::platform::env_path("LOCALAPPDATA")
-            .unwrap_or_else(|| permissions::home_dir().join("AppData/Local"));
-        base.join("Windle").join("history.json")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        permissions::home_dir().join("Library/Application Support/Windle/history.json")
-    }
+    crate::utils::platform::app_support_dir().join("history.json")
 }
 
 /// Read the log, treating any problem as "no history yet".

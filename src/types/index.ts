@@ -255,6 +255,35 @@ export interface MetricPoint {
   value: number;
 }
 
+/* ----------------------------- Desktop widget ---------------------------- */
+
+/** Which side of the ball the hover panel opened on. */
+export type WidgetPlacement = "above" | "below";
+
+/**
+ * Which edge of the window the ball sits on once the panel is open. The panel
+ * is wider than the ball, so it has to reach out to one side.
+ */
+export type WidgetSide = "left" | "right";
+
+/**
+ * The floating widget's own reading. Narrower than `SystemSnapshot` on purpose:
+ * the process table is the expensive half of a sample and the ball shows none
+ * of it.
+ */
+export interface WidgetSnapshot {
+  /** 0–1. */
+  cpuUsage: number;
+  temperatureC: number | null;
+  fanSpeedRpm: number | null;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  networkRxBytesPerSec: number;
+  networkTxBytesPerSec: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+}
+
 /* -------------------------------- Optimize ------------------------------- */
 
 /** Runtime status of an optimize task, streamed via `optimize://progress`. */

@@ -371,6 +371,8 @@ const zhCN = {
     "optimize.taskFailed": "任务执行失败",
     "optimize.loadFailed": "加载任务失败",
     "optimize.loadFailedMsg": "无法获取优化任务列表，请检查权限后重试。",
+    "optimize.elapsed": "已运行 {time}",
+    "optimize.slowTask": "这一步需要几分钟，系统仍在处理中，请不要关闭窗口。",
 
     // Live Monitor
     "monitor.title": "实时监控",
@@ -528,6 +530,20 @@ const zhCN = {
     "sidebar.expand": "展开侧边栏",
     "sidebar.freed": "已释放",
     "sidebar.thisSession": "本次会话",
+    "sidebar.showWidget": "显示桌面悬窗",
+    "sidebar.hideWidget": "隐藏桌面悬窗",
+
+    // Desktop widget
+    "floating.memory": "内存",
+    "floating.cpu": "CPU",
+    "floating.fan": "风扇",
+    "floating.disk": "磁盘",
+    "floating.network": "网络",
+    "floating.release": "释放内存",
+    "floating.releasing": "释放中…",
+    "floating.freed": "已释放 {bytes}",
+    "floating.releaseFailed": "释放失败",
+    "floating.tip": "单击释放 · 双击打开 · 右键隐藏",
 
     // Error
     "error.title": "出错了",
@@ -978,6 +994,8 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "optimize.taskFailed": "Task execution failed",
     "optimize.loadFailed": "Failed to load tasks",
     "optimize.loadFailedMsg": "Could not load optimization tasks. Please check permissions and try again.",
+    "optimize.elapsed": "Running for {time}",
+    "optimize.slowTask": "This step takes a few minutes — the system is still working, please keep the window open.",
 
     // Live Monitor
     "monitor.title": "Live Monitor",
@@ -1135,6 +1153,20 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "sidebar.expand": "Expand sidebar",
     "sidebar.freed": "Freed",
     "sidebar.thisSession": "this session",
+    "sidebar.showWidget": "Show desktop widget",
+    "sidebar.hideWidget": "Hide desktop widget",
+
+    // Desktop widget
+    "floating.memory": "Memory",
+    "floating.cpu": "CPU",
+    "floating.fan": "Fan",
+    "floating.disk": "Disk",
+    "floating.network": "Network",
+    "floating.release": "Release memory",
+    "floating.releasing": "Releasing…",
+    "floating.freed": "Freed {bytes}",
+    "floating.releaseFailed": "Release failed",
+    "floating.tip": "Click free · 2× open · Right-click hide",
 
     // Error
     "error.title": "Error",

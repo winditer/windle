@@ -81,6 +81,14 @@ const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
   hour12: false,
 });
 
+/** "42s" / "3m 07s" — the clock next to a running task. */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
 /** Icons/labels/descriptions by id — the backend ships macOS or Windows tasks
  *  depending on the platform, and the frontend knows both sets. */
 const TASK_ICONS: Record<OptimizeTaskId, LucideIcon> = {
@@ -163,6 +171,8 @@ export function SystemOptimize() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  /** Seconds the current task has been running, ticked once per second. */
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const busy = status === "running";
 
@@ -226,6 +236,36 @@ export function SystemOptimize() {
   }, [tasks]);
 
   const stateOf = (id: OptimizeTaskId): ItemState => states[id] ?? "ready";
+
+  // Which task the batch is on: the events report its index, and the queue
+  // holds the ids in the order they were sent.
+  const runningTaskId =
+    busy && queue.length > 0
+      ? queue[Math.min(completedInRun, queue.length - 1)]
+      : null;
+  const runningTask = tasks.find((task) => task.id === runningTaskId);
+
+  // The clock restarts whenever the batch moves on to the next task, so a
+  // long step shows its own time rather than the whole run's.
+  useEffect(() => {
+    if (runningTaskId == null) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(
+      () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [runningTaskId]);
+
+  /** Past its estimate, the step is worth a "this is normal" hint: `sfc` and
+   *  DISM routinely run for ten minutes or more. */
+  const slowTask =
+    runningTask != null && elapsedSeconds > runningTask.estimatedSeconds;
 
   const totalSeconds = useMemo(
     () =>
@@ -513,10 +553,16 @@ export function SystemOptimize() {
                 {t("optimize.running", { current: Math.min(completedInRun + 1, queue.length), total: queue.length })}
               </span>
               <span className="text-[12.5px] text-muted-foreground tabular-nums">
+                {t("optimize.elapsed", { time: formatElapsed(elapsedSeconds) })} ·{" "}
                 {Math.round(runProgress)}%
               </span>
             </div>
             <Progress value={runProgress} />
+            {slowTask && (
+              <p className="text-[11.5px] text-muted-foreground">
+                {t("optimize.slowTask")}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -529,6 +575,7 @@ export function SystemOptimize() {
             task={task}
             state={stateOf(task.id)}
             outcome={outcomes[task.id]}
+            elapsedSeconds={task.id === runningTaskId ? elapsedSeconds : undefined}
             disabled={busy}
             onRun={() => runOne(task)}
           />
@@ -667,11 +714,13 @@ interface TaskCardProps {
   task: OptimizeTask;
   state: ItemState;
   outcome: OptimizeOutcome | undefined;
+  /** Ticking clock, only passed to the task that is running right now. */
+  elapsedSeconds?: number;
   disabled: boolean;
   onRun: () => void;
 }
 
-function TaskCard({ task, state, outcome, disabled, onRun }: TaskCardProps) {
+function TaskCard({ task, state, outcome, elapsedSeconds, disabled, onRun }: TaskCardProps) {
   const { t } = useTranslation();
   const Icon = TASK_ICONS[task.id];
   const tone = STATE_TONE[state];
@@ -734,7 +783,9 @@ function TaskCard({ task, state, outcome, disabled, onRun }: TaskCardProps) {
         </div>
 
         <span className="hidden shrink-0 text-[11.5px] text-muted-foreground tabular-nums sm:block">
-          ~{task.estimatedSeconds}s
+          {elapsedSeconds != null
+            ? t("optimize.elapsed", { time: formatElapsed(elapsedSeconds) })
+            : `~${task.estimatedSeconds}s`}
         </span>
 
         <Button

@@ -23,6 +23,10 @@ const MIN_CPU_INTERVAL: Duration = Duration::from_millis(200);
 /// out to `pmset`/`ioreg` — so they are cached for this long.
 const BATTERY_TTL: Duration = Duration::from_secs(10);
 
+/// Capacity changes slowly, and reading it walks every mounted volume — so the
+/// floating widget's disk row reuses one reading for this long.
+const DISK_TTL: Duration = Duration::from_secs(30);
+
 /// How many processes a snapshot carries.
 const TOP_PROCESS_COUNT: usize = 8;
 
@@ -37,9 +41,11 @@ pub struct CpuStats {
     pub usage: f32,
     pub per_core: Vec<f32>,
     pub load_average: [f64; 3],
+    /// Hottest thermal sensor, when the machine exposes one: the SMC/IOKit
+    /// sensors on macOS, an ACPI thermal zone on Windows.
     pub temperature_c: Option<f32>,
-    /// Fan speed (RPM) read from the AppleSMC IOKit service. `None` on
-    /// machines without a fan (Apple Silicon laptops, Mac mini, etc.).
+    /// Fan speed (RPM): the AppleSMC reader on macOS, a WMI query on Windows.
+    /// `None` on machines that report no fan at all.
     pub fan_speed_rpm: Option<f32>,
 }
 
@@ -119,6 +125,24 @@ pub struct SystemSnapshot {
     pub host: HostInfo,
 }
 
+/// What the desktop floating widget draws: memory for the water level, plus the
+/// readings in its hover panel. Deliberately not a [`SystemSnapshot`] — the
+/// process table is the expensive half of a sample and none of it is on screen
+/// in a 132 px ball.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WidgetSnapshot {
+    pub cpu_usage: f32,
+    pub temperature_c: Option<f32>,
+    pub fan_speed_rpm: Option<f32>,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    pub network_rx_bytes_per_sec: u64,
+    pub network_tx_bytes_per_sec: u64,
+    pub disk_used_bytes: u64,
+    pub disk_total_bytes: u64,
+}
+
 /// Owns the `sysinfo` handles and the timestamps needed to turn the counters
 /// into per-second rates.
 pub struct Sampler {
@@ -131,6 +155,9 @@ pub struct Sampler {
     last_sampled: Instant,
     battery: Option<BatteryStats>,
     battery_read_at: Option<Instant>,
+    /// Boot volume `(used, total)`, and when it was read.
+    disk: Option<(u64, u64)>,
+    disk_read_at: Option<Instant>,
 }
 
 impl Sampler {
@@ -146,29 +173,15 @@ impl Sampler {
             last_sampled: Instant::now(),
             battery: None,
             battery_read_at: None,
+            disk: None,
+            disk_read_at: None,
         }
     }
 
     /// Refresh every counter and derive one snapshot from the delta since the
     /// previous call.
     pub fn sample(&mut self) -> SystemSnapshot {
-        // CPU percentages are computed against the previous refresh, so give
-        // the kernel a moment when we are called back-to-back.
-        let waited = self.last_sampled.elapsed();
-        if waited < MIN_CPU_INTERVAL {
-            std::thread::sleep(MIN_CPU_INTERVAL - waited);
-        }
-
-        self.system.refresh_cpu_all();
-        self.system.refresh_memory();
-        self.system
-            .refresh_processes(ProcessesToUpdate::All, true);
-        self.networks.refresh();
-
-        let elapsed = self.last_sampled.elapsed();
-        self.last_sampled = Instant::now();
-        // Guard the divisor: a sub-millisecond gap would inflate every rate.
-        let seconds = elapsed.as_secs_f64().max(0.001);
+        let seconds = self.advance(true);
 
         SystemSnapshot {
             timestamp: super::clean::now_millis(),
@@ -181,6 +194,51 @@ impl Sampler {
             uptime_seconds: System::uptime(),
             host: host_info(&self.system),
         }
+    }
+
+    /// The floating widget's reading. `with_processes` is false here: a widget
+    /// that sits on screen all day should not walk the process table twice a
+    /// second for numbers nobody sees.
+    pub fn sample_widget(&mut self) -> WidgetSnapshot {
+        let seconds = self.advance(false);
+        let cpu = self.cpu();
+        let network = self.network(seconds);
+        let (disk_used_bytes, disk_total_bytes) = self.disk();
+
+        WidgetSnapshot {
+            cpu_usage: cpu.usage,
+            temperature_c: cpu.temperature_c,
+            fan_speed_rpm: cpu.fan_speed_rpm,
+            memory_used_bytes: self.system.used_memory(),
+            memory_total_bytes: self.system.total_memory(),
+            network_rx_bytes_per_sec: network.first().map_or(0, |n| n.rx_bytes_per_sec),
+            network_tx_bytes_per_sec: network.first().map_or(0, |n| n.tx_bytes_per_sec),
+            disk_used_bytes,
+            disk_total_bytes,
+        }
+    }
+
+    /// Refresh the counters and hand back the time base for the rates.
+    fn advance(&mut self, with_processes: bool) -> f64 {
+        // CPU percentages are computed against the previous refresh, so give
+        // the kernel a moment when we are called back-to-back.
+        let waited = self.last_sampled.elapsed();
+        if waited < MIN_CPU_INTERVAL {
+            std::thread::sleep(MIN_CPU_INTERVAL - waited);
+        }
+
+        self.system.refresh_cpu_all();
+        self.system.refresh_memory();
+        if with_processes {
+            self.system
+                .refresh_processes(ProcessesToUpdate::All, true);
+        }
+        self.networks.refresh();
+
+        let elapsed = self.last_sampled.elapsed();
+        self.last_sampled = Instant::now();
+        // Guard the divisor: a sub-millisecond gap would inflate every rate.
+        elapsed.as_secs_f64().max(0.001)
     }
 
     fn cpu(&mut self) -> CpuStats {
@@ -203,8 +261,8 @@ impl Sampler {
             usage,
             per_core,
             load_average: [load.one, load.five, load.fifteen],
-            temperature_c: self.hottest_component(),
-            fan_speed_rpm: read_fan_speed_rpm(),
+            temperature_c: self.hottest_component().or_else(wmi_temperature),
+            fan_speed_rpm: read_fan_speed_rpm().or_else(wmi_fan_speed_rpm),
         }
     }
 
@@ -324,6 +382,21 @@ impl Sampler {
         self.components.refresh();
         hottest_component(&self.components)
     }
+
+    /// Boot volume `(used, total)`, re-read at most every [`DISK_TTL`].
+    fn disk(&mut self) -> (u64, u64) {
+        let stale = self
+            .disk_read_at
+            .is_none_or(|read_at| read_at.elapsed() >= DISK_TTL);
+
+        if stale {
+            self.disk = super::analyze::boot_volume()
+                .map(|volume| (volume.used_bytes, volume.total_bytes));
+            self.disk_read_at = Some(Instant::now());
+        }
+
+        self.disk.unwrap_or((0, 0))
+    }
 }
 
 impl Default for Sampler {
@@ -336,6 +409,10 @@ impl Default for Sampler {
 /// are refreshed in place.
 pub struct MonitorState {
     pub sampler: Mutex<Sampler>,
+    /// The floating widget reads through its own sampler. It is on screen
+    /// continuously, and a shared one would make its rates depend on whoever
+    /// sampled last.
+    pub widget_sampler: Mutex<Sampler>,
     /// Incremented every time a stream starts or stops. A polling thread
     /// captures the value at spawn time and exits as soon as it no longer
     /// matches, so a superseded or stopped thread always terminates.
@@ -346,6 +423,7 @@ impl Default for MonitorState {
     fn default() -> Self {
         Self {
             sampler: Mutex::new(Sampler::new()),
+            widget_sampler: Mutex::new(Sampler::new()),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -363,6 +441,20 @@ pub async fn get_snapshot(state: State<'_, MonitorState>) -> Result<SystemSnapsh
         })?;
 
     Ok(sampler.sample())
+}
+
+/// The floating widget's reading, taken on its own sampler.
+#[tauri::command]
+pub async fn get_widget_snapshot(state: State<'_, MonitorState>) -> Result<WidgetSnapshot> {
+    let mut sampler = state
+        .widget_sampler
+        .lock()
+        .map_err(|_| WindleError::Command {
+            command: "get_widget_snapshot".into(),
+            message: "the system sampler is unavailable".into(),
+        })?;
+
+    Ok(sampler.sample_widget())
 }
 
 /// Start pushing snapshots on [`SNAPSHOT_EVENT`].
@@ -800,9 +892,226 @@ fn read_fan_speed_rpm() -> Option<f32> {
     }
 }
 
-/// Stub for non-macOS builds.
+/// No SMC outside macOS; Windows reports fans through WMI instead, see
+/// [`windows_sensors`].
 #[cfg(not(target_os = "macos"))]
 fn read_fan_speed_rpm() -> Option<f32> {
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Thermal sensors on Windows
+//
+// Windows has no general sensor API. What exists is WMI, and which classes
+// report anything depends on the firmware: some machines expose an ACPI
+// thermal zone, almost none report a fan there, and only a machine running a
+// hardware monitor (LibreHardwareMonitor or OpenHardwareMonitor) exposes both.
+// A query therefore cannot be a syscall — it is a PowerShell round trip — so
+// readings are taken on a background thread and cached.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+mod windows_sensors {
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    /// Temperatures and fan speeds move slowly, and every refresh costs a
+    /// process launch.
+    const REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+
+    /// A query that fails outright — PowerShell blocked by policy, or missing —
+    /// will not start working on a retry, so those back off much further.
+    const FAILURE_BACKOFF: Duration = Duration::from_secs(300);
+
+    /// Readings are only accepted within these bounds, which keeps a firmware
+    /// quirk from putting -40 °C or 4 million RPM on screen.
+    const MAX_TEMPERATURE_C: f32 = 150.0;
+    const MAX_FAN_RPM: f32 = 50_000.0;
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    pub struct Sensors {
+        pub temperature_c: Option<f32>,
+        pub fan_speed_rpm: Option<f32>,
+    }
+
+    static CACHE: Mutex<Sensors> = Mutex::new(Sensors {
+        temperature_c: None,
+        fan_speed_rpm: None,
+    });
+
+    /// The latest reading. The first call starts the refresher; no caller ever
+    /// waits for the query itself.
+    pub fn read() -> Sensors {
+        static REFRESHER: OnceLock<()> = OnceLock::new();
+
+        REFRESHER.get_or_init(|| {
+            std::thread::spawn(|| loop {
+                let delay = match query() {
+                    Some(sensors) => {
+                        if let Ok(mut cache) = CACHE.lock() {
+                            *cache = sensors;
+                        }
+                        REFRESH_INTERVAL
+                    }
+                    None => FAILURE_BACKOFF,
+                };
+
+                std::thread::sleep(delay);
+            });
+        });
+
+        CACHE.lock().map(|sensors| *sensors).unwrap_or_default()
+    }
+
+    /// The query, or `None` when PowerShell itself could not be run.
+    fn query() -> Option<Sensors> {
+        let mut command = Command::new(powershell());
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            QUERY,
+        ]);
+        crate::utils::process::hide_console(&mut command);
+
+        let output = command.output().ok()?;
+        output
+            .status
+            .success()
+            .then(|| parse(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    /// `powershell.exe` by absolute path where it can be found, so a rewritten
+    /// `PATH` cannot redirect the query to another program.
+    fn powershell() -> PathBuf {
+        crate::utils::platform::env_path("SystemRoot")
+            .map(|root| root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+            .filter(|exe| exe.is_file())
+            .unwrap_or_else(|| PathBuf::from("powershell.exe"))
+    }
+
+    /// WMI is the only source; the ACPI thermal zone is the fallback for
+    /// machines with no hardware monitor running. Values are printed as
+    /// `temp=<°C>` and `fan=<RPM>` lines, and a missing line means the class
+    /// reported nothing. The culture is pinned so a comma decimal separator
+    /// cannot slip into the numbers.
+    const QUERY: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$invariant = [System.Globalization.CultureInfo]::InvariantCulture
+$temp = $null
+$fan = $null
+
+$monitor = Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor
+if (-not $monitor) { $monitor = Get-CimInstance -Namespace root/OpenHardwareMonitor -ClassName Sensor }
+if ($monitor) {
+    $hottest = ($monitor | Where-Object { $_.SensorType -eq 'Temperature' } | Measure-Object -Property Value -Maximum).Maximum
+    if ($hottest -gt 0) { $temp = $hottest }
+    $fastest = ($monitor | Where-Object { $_.SensorType -eq 'Fan' } | Measure-Object -Property Value -Maximum).Maximum
+    if ($fastest -gt 0) { $fan = $fastest }
+}
+
+if ($null -eq $temp) {
+    $zones = Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature
+    $tenths = ($zones | Measure-Object -Property CurrentTemperature -Maximum).Maximum
+    # The ACPI class reports tenths of a Kelvin.
+    if ($tenths -gt 0) { $temp = $tenths / 10 - 273.15 }
+}
+
+if ($null -eq $fan) {
+    $fans = Get-CimInstance -Namespace root/cimv2 -ClassName Win32_Fan
+    $speed = ($fans | Measure-Object -Property DesiredSpeed -Maximum).Maximum
+    if ($speed -gt 0) { $fan = $speed }
+}
+
+if ($temp) { "temp=" + $temp.ToString($invariant) }
+if ($fan) { "fan=" + $fan.ToString($invariant) }
+"#;
+
+    /// Read the lines the query prints.
+    fn parse(output: &str) -> Sensors {
+        let mut sensors = Sensors::default();
+
+        for line in output.lines() {
+            let Some((key, value)) = line.trim().split_once('=') else {
+                continue;
+            };
+            let Ok(value) = value.trim().parse::<f32>() else {
+                continue;
+            };
+
+            match key.trim() {
+                "temp" if value > 0.0 && value < MAX_TEMPERATURE_C => {
+                    sensors.temperature_c = Some(value)
+                }
+                "fan" if value > 0.0 && value < MAX_FAN_RPM => sensors.fan_speed_rpm = Some(value),
+                _ => {}
+            }
+        }
+
+        sensors
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn reads_the_values_the_query_prints() {
+            let sensors = parse("temp=61.5\nfan=2140\n");
+            assert_eq!(sensors.temperature_c, Some(61.5));
+            assert_eq!(sensors.fan_speed_rpm, Some(2140.0));
+        }
+
+        #[test]
+        fn missing_lines_stay_empty() {
+            assert_eq!(parse(""), Sensors::default());
+            assert_eq!(parse("temp=\nfan=\n"), Sensors::default());
+            assert_eq!(parse("temp=61.5\n"), Sensors {
+                temperature_c: Some(61.5),
+                fan_speed_rpm: None,
+            });
+            // A machine with a fan but no readable temperature.
+            assert_eq!(parse("fan=1200\n").fan_speed_rpm, Some(1200.0));
+        }
+
+        #[test]
+        fn implausible_readings_are_dropped() {
+            // Kelvin left unconverted, a sensor stuck at zero, and a fan
+            // reporting a nonsense speed.
+            assert_eq!(parse("temp=3132\n").temperature_c, None);
+            assert_eq!(parse("temp=0\n").temperature_c, None);
+            assert_eq!(parse("fan=999999\n").fan_speed_rpm, None);
+            // A culture that uses a comma would print this way.
+            assert_eq!(parse("temp=61,5\n").temperature_c, None);
+        }
+    }
+}
+
+/// Highest thermal sensor reading from WMI. Windows only: elsewhere the SMC
+/// reader and `sysinfo` already cover this.
+#[cfg(target_os = "windows")]
+fn wmi_temperature() -> Option<f32> {
+    windows_sensors::read().temperature_c
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wmi_temperature() -> Option<f32> {
+    None
+}
+
+/// Fan speed from WMI. Windows only, for the same reason.
+#[cfg(target_os = "windows")]
+fn wmi_fan_speed_rpm() -> Option<f32> {
+    windows_sensors::read().fan_speed_rpm
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wmi_fan_speed_rpm() -> Option<f32> {
     None
 }
 

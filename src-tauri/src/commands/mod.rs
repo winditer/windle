@@ -198,7 +198,12 @@ pub async fn reveal_in_finder(path: String) -> crate::utils::Result<()> {
 /// Run a system utility and return its stdout, mapping a non-zero exit to an
 /// error the frontend can display.
 pub(crate) fn run_tool(command: &str, args: &[&str]) -> crate::utils::Result<String> {
-    let output = std::process::Command::new(command).args(args).output()?;
+    let mut child = std::process::Command::new(command);
+    child.args(args);
+    // Console programs must not open a window of their own.
+    crate::utils::process::hide_console(&mut child);
+
+    let output = child.output()?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())

@@ -29,6 +29,24 @@
         "skipTaskbar": true,
         "alwaysOnTop": true,
         "center": false
+      },
+      {
+        "label": "floating",
+        "title": "",
+        "width": 33,
+        "height": 33,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "focus": false,
+        "acceptFirstMouse": true,
+        "shadow": false,
+        "center": false
       }
     ]
   },

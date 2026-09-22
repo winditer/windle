@@ -137,6 +137,14 @@
 
   --animate-fade-in: fade-in 0.2s ease-out;
   --animate-scale-in: scale-in 0.16s ease-out;
+
+  /* The desktop widget's swirl. Both run for the same 1.1s, which is how long
+     `FloatingWidget` keeps the effect on: the vortex turns in the plane of the
+     screen while the waves race along, then the water is back where it started.
+     The vortex's own turning is SMIL, in the component — it starts and ends on
+     whole turns, so there is nothing for a keyframe to carry. */
+  --animate-ball-vortex: ball-vortex 1.1s ease-in-out;
+  --animate-ball-swirl: ball-swirl 1.1s ease-in-out;
 }
 
 @keyframes fade-in {
@@ -156,6 +164,37 @@
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+/* The vortex fading in over the water and out again. Nothing is how it rests,
+   which is also where it ends, so mounting it for the length of a release and
+   taking it away after cannot be seen. */
+@keyframes ball-vortex {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The water racing along with the swirl. 264px — in the ball's own units —
+   is a whole number of wavelengths for both wave layers (`WaterBall`'s 66 and
+   88: 264 = 4 × 66 = 3 × 88), so the surface is in the same phase at both ends
+   of the sweep and the water cannot jump when the swirl starts or ends. */
+@keyframes ball-swirl {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-264px);
   }
 }
 
@@ -180,6 +219,14 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
+  }
+
+  /* The popup and the desktop widget are transparent windows that draw their
+     own rounded shapes; anything painted behind them would square off the
+     corners. `main.tsx` tags the document with the window label. */
+  html[data-window="menubar"] body,
+  html[data-window="floating"] body {
+    background-color: transparent;
   }
 
   /* The whole window is a Tauri surface — no text selection or right-click

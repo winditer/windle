@@ -29,6 +29,22 @@
         "alwaysOnTop": true,
         "center": false,
         "shadow": false
+      },
+      {
+        "label": "floating",
+        "title": "",
+        "width": 33,
+        "height": 33,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "focus": false,
+        "shadow": false,
+        "center": false
       }
     ]
   },

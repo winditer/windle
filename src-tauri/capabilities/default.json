@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions granted to the Windle main window.",
-  "windows": ["main", "menubar"],
+  "description": "Permissions granted to the Windle windows.",
+  "windows": ["main", "menubar", "floating"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -17,6 +17,7 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
+    "core:window:allow-set-position",
     "core:event:default",
     "core:app:default",
     "core:path:default",

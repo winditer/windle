@@ -3,6 +3,7 @@ pub mod fs_ops;
 pub mod history;
 pub mod permissions;
 pub mod platform;
+pub mod process;
 
 #[cfg(test)]
 pub mod test_support;

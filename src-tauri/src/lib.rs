@@ -1,11 +1,12 @@
 pub mod commands;
+pub mod floating;
 pub mod scanner;
 pub mod utils;
 
 use tauri::{
     Manager,
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    menu::{Menu, MenuItem},
     WindowEvent,
 };
 
@@ -20,6 +21,9 @@ static POPUP_HIDDEN_AT: std::sync::Mutex<Option<std::time::Instant>> =
 const TRAY_QUIT_LABEL: &str = "退出状态栏";
 #[cfg(not(target_os = "macos"))]
 const TRAY_QUIT_LABEL: &str = "退出托盘";
+
+/// The tray menu entry that shows and hides the desktop widget.
+const TRAY_FLOATING_LABEL: &str = "桌面悬窗";
 
 /// Menu bar / status bar commands. Kept in a dedicated module so the
 /// `#[tauri::command]` helper macros do not clash with `generate_handler!`,
@@ -90,17 +94,33 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(commands::clean::CleanState::default())
         .manage(commands::monitor::MonitorState::default())
+        .manage(floating::WidgetState::default())
         .setup(|app| {
             // Build the right-click context menu. Its labels are the one piece
             // of UI the frontend cannot localize — it is built here, once — so
             // they follow the platform's own wording instead: the icon sits in
             // the menu bar on macOS and in the notification area on Windows.
             let open_item = MenuItem::with_id(app, "open", "打开 Windle", true, None::<&str>)?;
+            let floating_item = CheckMenuItem::with_id(
+                app,
+                "floating",
+                TRAY_FLOATING_LABEL,
+                true,
+                false,
+                None::<&str>,
+            )?;
             let quit_tray_item =
                 MenuItem::with_id(app, "quit_tray", TRAY_QUIT_LABEL, true, None::<&str>)?;
             let quit_app_item =
                 MenuItem::with_id(app, "quit_app", "退出 Windle", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_item, &quit_tray_item, &quit_app_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[&open_item, &floating_item, &quit_tray_item, &quit_app_item],
+            )?;
+
+            // The checkmark has to follow the widget wherever it is toggled
+            // from, so the item handle is kept in managed state.
+            app.manage(floating::TrayFloatingItem(floating_item));
 
             // macOS takes a template image (monochrome black on transparent)
             // and adapts it to light and dark menu bars automatically. Windows
@@ -131,6 +151,9 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
+                        "floating" => {
+                            let _ = floating::toggle_floating_window(app.clone());
+                        }
                         "quit_tray" => {
                             if let Some(tray) = app.tray_by_id("windle-tray") {
                                 let _ = tray.set_visible(false);
@@ -138,6 +161,8 @@ pub fn run() {
                             if let Some(window) = app.get_webview_window("menubar") {
                                 let _ = window.hide();
                             }
+                            // The tray icon was the last thing holding the app
+                            // up: with the main window closed too, quit.
                             let main_visible = app
                                 .get_webview_window("main")
                                 .map(|w| w.is_visible().unwrap_or(false))
@@ -233,6 +258,8 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            floating::restore(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -271,6 +298,7 @@ pub fn run() {
             commands::optimize::clear_optimize_auth,
             // Live Monitor
             commands::monitor::get_snapshot,
+            commands::monitor::get_widget_snapshot,
             commands::monitor::start_monitor,
             commands::monitor::stop_monitor,
             commands::monitor::list_processes,
@@ -289,6 +317,13 @@ pub fn run() {
             // Menu bar / status bar
             menubar::quit_status_bar,
             menubar::show_main_window,
+            // Desktop floating widget
+            floating::show_floating_window,
+            floating::hide_floating_window,
+            floating::toggle_floating_window,
+            floating::floating_window_visible,
+            floating::remember_floating_position,
+            floating::set_floating_expanded,
         ])
         .on_window_event(|window, event| {
             match event {
@@ -308,6 +343,16 @@ pub fn run() {
                     } else if label == "menubar" {
                         let _ = window.hide();
                         api.prevent_close();
+                    } else if label == floating::WINDOW_LABEL {
+                        // Closing is hiding: the tray item and the sidebar
+                        // toggle are the way back.
+                        let _ = floating::hide(window.app_handle());
+                        api.prevent_close();
+                    }
+                }
+                WindowEvent::Moved(position) => {
+                    if window.label() == floating::WINDOW_LABEL {
+                        floating::remember_position(window.app_handle(), *position);
                     }
                 }
                 WindowEvent::Focused(false) => {

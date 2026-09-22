@@ -1,6 +1,12 @@
-import { Globe, PanelLeftClose, PanelLeftOpen, ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Droplets, Globe, PanelLeftClose, PanelLeftOpen, ShieldAlert } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/navigation";
 import { useTranslation } from "@/hooks/useTranslation";
+import {
+  isFloatingWindowVisible,
+  onFloatingVisibility,
+  toggleFloatingWindow,
+} from "@/services/floating";
 import { cn, formatBytes } from "@/lib/utils";
 import { selectIsWindows, useAppStore } from "@/stores/appStore";
 
@@ -13,6 +19,35 @@ export function Sidebar() {
   const fullDiskAccess = useAppStore((state) => state.permissions.fullDiskAccess);
   const isWindows = useAppStore(selectIsWindows);
   const { t, lang, toggleLang } = useTranslation();
+
+  // The widget can also be closed from the tray or from its own right-click
+  // menu, so the button mirrors the backend rather than owning the state.
+  const [widgetVisible, setWidgetVisible] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    isFloatingWindowVisible()
+      .then((visible) => {
+        if (!cancelled) setWidgetVisible(visible);
+      })
+      .catch(() => {});
+
+    onFloatingVisibility((visible) => setWidgetVisible(visible)).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const toggleWidget = () => {
+    toggleFloatingWindow().catch(() => {});
+  };
 
   return (
     <aside
@@ -108,6 +143,27 @@ export function Sidebar() {
             {t("sidebar.thisSession")}
           </p>
         )}
+
+        <button
+          type="button"
+          onClick={toggleWidget}
+          title={widgetVisible ? t("sidebar.hideWidget") : t("sidebar.showWidget")}
+          aria-pressed={widgetVisible}
+          className={cn(
+            "no-drag flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium transition-colors",
+            widgetVisible
+              ? "bg-primary/12 text-primary hover:bg-primary/18"
+              : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+            collapsed && "justify-center px-0",
+          )}
+        >
+          <Droplets className="size-[17px]" strokeWidth={1.9} />
+          {!collapsed && (
+            <span>
+              {widgetVisible ? t("sidebar.hideWidget") : t("sidebar.showWidget")}
+            </span>
+          )}
+        </button>
 
         <button
           type="button"
