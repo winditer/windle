@@ -11,3 +11,8 @@ export async function getPlatform(): Promise<Platform> {
   if (os === "linux") return "linux";
   return "macos";
 }
+
+/** Quit the app — used when the first-launch disclaimer is declined. */
+export async function quitApp(): Promise<void> {
+  await call<void>("quit_app");
+}

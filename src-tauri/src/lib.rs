@@ -71,6 +71,13 @@ mod menubar {
             let _ = window.hide();
         }
     }
+
+    /// Quit the whole app. Used by the first-launch disclaimer gate when the
+    /// user declines the terms instead of accepting them.
+    #[tauri::command]
+    pub fn quit_app(app: tauri::AppHandle) {
+        app.exit(0);
+    }
 }
 
 /// Build and run the Tauri application.
@@ -327,6 +334,7 @@ pub fn run() {
             // Menu bar / status bar
             menubar::quit_status_bar,
             menubar::show_main_window,
+            menubar::quit_app,
             // Desktop floating widget
             floating::show_floating_window,
             floating::hide_floating_window,

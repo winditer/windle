@@ -1,6 +1,6 @@
 [package]
 name = "windle"
-version = "0.8.0"
+version = "0.9.0"
 description = "Windle — system maintenance toolkit for macOS and Windows"
 license = "MIT"
 authors = ["Windle"]

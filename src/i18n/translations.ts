@@ -661,6 +661,17 @@ const zhCN = {
     "menubar.releasing": "释放中...",
     "menubar.freed": "已释放 {bytes}",
 
+    // First-launch disclaimer gate
+    "disclaimer.title": "免责声明",
+    "disclaimer.intro": "Windle 会按你的选择删除文件、卸载应用并修改系统状态。请先阅读并理解以下要点：",
+    "disclaimer.point1": "清理、卸载与优化可能删除文件或改变系统状态，部分数据一经删除无法恢复（如清空的废纸篓、Docker 卷、AI Agent 会话数据）。",
+    "disclaimer.point2": "请在操作前备份重要数据（如 Time Machine 或文件历史记录），并自行确认每一项勾选内容，尤其是标记为「谨慎」的项目。",
+    "disclaimer.point3": "部分功能需要完全磁盘访问或管理员权限；系统优化等任务可能改变系统状态，请确认理解后果后再执行。",
+    "disclaimer.point4": "本软件按「现状」提供，不附带任何担保；误删文件、错误使用或无法使用造成的损失由使用者自行承担。",
+    "disclaimer.more": "完整条款（中英双语）见项目文档 DISCLAIMER.md，MIT 许可证同样适用。",
+    "disclaimer.accept": "我已阅读并同意",
+    "disclaimer.decline": "不同意，退出应用",
+
     // -------------------------------------------------------------------
     // Windows wording overrides. `t()` prefers `${key}.windows` over the base
     // key when the backend reports Windows, so macOS-specific phrasing
@@ -1356,6 +1367,17 @@ export const translations: Record<Lang, Record<TranslationKey, string>> = {
     "menubar.releaseMemory": "Release Memory",
     "menubar.releasing": "Releasing...",
     "menubar.freed": "Freed {bytes}",
+
+    // First-launch disclaimer gate
+    "disclaimer.title": "Disclaimer",
+    "disclaimer.intro": "Windle deletes files, uninstalls apps and changes system state according to your choices. Please read and understand the following before you continue:",
+    "disclaimer.point1": "Cleaning, uninstalling and optimizing may delete files or alter system state, and some data cannot be recovered once removed (e.g. an emptied Trash, Docker volumes, AI agent session data).",
+    "disclaimer.point2": "Back up important data first (e.g. Time Machine or File History), and review every selected item yourself — especially anything marked \"caution\".",
+    "disclaimer.point3": "Some features need Full Disk Access or administrator rights, and tasks such as System Optimize can change system state; make sure you understand the consequences before running them.",
+    "disclaimer.point4": "The software is provided \"as is\", without warranty of any kind; you are responsible for any loss caused by accidental deletions, misuse, or the inability to use it.",
+    "disclaimer.more": "The full bilingual terms are in DISCLAIMER.md in the project; the MIT license also applies.",
+    "disclaimer.accept": "I have read and agree",
+    "disclaimer.decline": "Decline and quit",
 
     // -------------------------------------------------------------------
     // Windows wording overrides. `t()` prefers `${key}.windows` over the base

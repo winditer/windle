@@ -14,6 +14,7 @@ import {
   SystemOptimize,
 } from "@/components/features";
 import { checkPermissions, getDashboardSummary } from "@/services/dashboard";
+import { DisclaimerGate } from "@/components/shared";
 import { useAppStore } from "@/stores/appStore";
 import type { ModuleId } from "@/types";
 
@@ -68,11 +69,14 @@ export default function App() {
   const View = MODULE_VIEWS[activeModule];
 
   return (
-    <Layout>
-      {/* Remounting on module change replays the fade, giving page transitions. */}
-      <div key={activeModule} className="animate-fade-in">
-        <View />
-      </div>
-    </Layout>
+    <>
+      <Layout>
+        {/* Remounting on module change replays the fade, giving page transitions. */}
+        <div key={activeModule} className="animate-fade-in">
+          <View />
+        </div>
+      </Layout>
+      <DisclaimerGate />
+    </>
   );
 }

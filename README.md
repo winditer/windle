@@ -147,6 +147,10 @@ scripts/             跨平台静态检查脚本
 
 见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 免责声明
+
+Windle 会按你的选择删除文件、卸载应用并修改系统状态，部分操作不可恢复。请在操作前备份重要数据、自行确认每一项勾选内容；误删文件、错误使用或无法使用本软件造成的损失由使用者自行承担。完整条款（中英双语）见 [DISCLAIMER.md](DISCLAIMER.md)。
+
 ## 许可证
 
 [MIT](LICENSE)
