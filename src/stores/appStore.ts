@@ -20,6 +20,7 @@ const MODULE_IDS: ModuleId[] = [
   "installer",
   "agent",
   "docker",
+  "automation",
 ];
 
 const idleStatuses = () =>

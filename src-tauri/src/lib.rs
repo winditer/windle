@@ -1,3 +1,4 @@
+pub mod automation;
 pub mod commands;
 pub mod floating;
 pub mod scanner;
@@ -94,6 +95,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(commands::clean::CleanState::default())
         .manage(commands::monitor::MonitorState::default())
+        .manage(automation::AutomationState::default())
         .manage(floating::WidgetState::default())
         .setup(|app| {
             // Build the right-click context menu. Its labels are the one piece
@@ -259,6 +261,7 @@ pub fn run() {
                 .build(app)?;
 
             floating::restore(app.handle());
+            automation::start(app.handle());
 
             Ok(())
         })
@@ -314,6 +317,13 @@ pub fn run() {
             // AI Agent Cleanup
             commands::agent::scan_ai_agents,
             commands::agent::remove_ai_data,
+            // Automation
+            automation::automation_status,
+            automation::automation_set_config,
+            automation::automation_logs,
+            automation::automation_clear_logs,
+            automation::automation_run_now,
+            automation::automation_generate_token,
             // Menu bar / status bar
             menubar::quit_status_bar,
             menubar::show_main_window,

@@ -11,3 +11,4 @@ export * as optimizeService from "./optimize";
 export * as purgeService from "./purge";
 export * as uninstallService from "./uninstall";
 export * as dockerService from "./docker";
+export * as automationService from "./automation";

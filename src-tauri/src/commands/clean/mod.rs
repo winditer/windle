@@ -495,6 +495,19 @@ pub fn quick_junk_estimate() -> u64 {
     imp::quick_junk_estimate()
 }
 
+/// Every path an unattended deep clean may remove: safe categories only, and
+/// only the safe items inside them — exactly what the Deep Clean page checks
+/// by default, since a run nobody is watching cannot ask questions.
+pub fn auto_clean_paths(cancel: &CancelToken) -> Vec<String> {
+    all_categories()
+        .into_iter()
+        .filter(|id| risk_of(*id) == RiskLevel::Safe)
+        .flat_map(|id| scan_category(id, cancel))
+        .filter(|item| item.risk == RiskLevel::Safe)
+        .map(|item| item.path)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

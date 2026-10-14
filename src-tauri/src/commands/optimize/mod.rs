@@ -164,6 +164,13 @@ pub async fn run_optimize_task(app: AppHandle, task_id: OptimizeTaskId) -> Resul
     Ok(outcomes.remove(0))
 }
 
+/// Run the memory purge on its own, without a frontend driving the command —
+/// the automation module's unattended path to the same in-process task.
+pub(crate) async fn purge_memory(app: &AppHandle) -> OptimizeOutcome {
+    let mut outcomes = platform::run_tasks(app, vec![OptimizeTaskId::PurgeMemory]).await;
+    outcomes.remove(0)
+}
+
 /// Run several tasks in order, one outcome per task, in the order requested.
 ///
 /// Each platform decides how to keep the admin prompts down to one: macOS

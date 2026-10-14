@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  CalendarClock,
   Download,
   FolderCode,
   HardDrive,
@@ -81,6 +82,12 @@ export const NAV_ITEMS: NavItem[] = [
     labelKey: "nav.aiAgentCleanup",
     descKey: "nav.aiAgentCleanup.desc",
     icon: Bot,
+  },
+  {
+    id: "automation",
+    labelKey: "nav.automation",
+    descKey: "nav.automation.desc",
+    icon: CalendarClock,
   },
 ];
 

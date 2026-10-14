@@ -8,3 +8,4 @@ export { ProjectPurge } from "./ProjectPurge";
 export { InstallerCleanup } from "./InstallerCleanup";
 export { AIAgentCleanup } from "./AIAgentCleanup";
 export { DockerCleanup } from "./DockerCleanup";
+export { Automation } from "./Automation";

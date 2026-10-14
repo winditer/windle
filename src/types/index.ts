@@ -14,7 +14,8 @@ export type ModuleId =
   | "purge"
   | "installer"
   | "agent"
-  | "docker";
+  | "docker"
+  | "automation";
 
 /** Long-running scan/clean lifecycle. */
 export type TaskStatus = "idle" | "scanning" | "ready" | "running" | "done" | "error";
@@ -569,4 +570,88 @@ export interface DockerCleanRequest {
   volumeNames: string[];
   /** "0s" | "72h" | "168h" | "720h"; null skips build cache. */
   buildCacheUntil: string | null;
+}
+
+/* ------------------------------- Automation ------------------------------ */
+
+/** What an automated run does. Mirrors Rust `AutomationAction`. */
+export type AutomationAction = "deep-clean" | "memory-clean";
+
+/** What asked for a run, shown in the log. Mirrors Rust `TriggerSource`. */
+export type TriggerSource =
+  | "schedule"
+  | "disk"
+  | "memory"
+  | "webhook"
+  | "manual";
+
+/**
+ * The weekly cleanup window. Days use the same numbering as JavaScript's
+ * `Date.getDay()` and Rust's `tm_wday`: 0 = Sunday … 6 = Saturday.
+ */
+export interface ScheduleConfig {
+  enabled: boolean;
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[];
+  /** First hour of the daily window (inclusive), 0–23. */
+  startHour: number;
+  /** Last hour of the daily window (inclusive), 0–23. */
+  endHour: number;
+  intervalHours: number;
+}
+
+/** Fire an action once a resource's usage crosses a percentage. */
+export interface ThresholdTrigger {
+  enabled: boolean;
+  /** Percentage of the resource in use that fires the trigger (1–100). */
+  thresholdPercent: number;
+}
+
+export interface WebhookConfig {
+  enabled: boolean;
+  port: number;
+  /** Shared secret every caller must present; at least 8 characters. */
+  token: string;
+}
+
+export interface AutomationConfig {
+  schedule: ScheduleConfig;
+  /** Deep clean once the boot volume is at least this full. */
+  diskTrigger: ThresholdTrigger;
+  /** Purge memory once usage crosses this mark. */
+  memoryTrigger: ThresholdTrigger;
+  /** Empty the trash after every automated deep clean. */
+  emptyTrash: boolean;
+  webhook: WebhookConfig;
+}
+
+export interface WebhookStatus {
+  running: boolean;
+  /** Listen address while the listener is up, e.g. "127.0.0.1:17830". */
+  address: string | null;
+  /** Why the last bind attempt failed, if it did. */
+  error: string | null;
+}
+
+export interface AutomationStatus {
+  config: AutomationConfig;
+  /** Epoch milliseconds of the next scheduled run; null while the schedule is off. */
+  nextRunAt: number | null;
+  /** A run — automatic or manual — is in flight right now. */
+  running: boolean;
+  webhook: WebhookStatus;
+}
+
+export interface AutomationLogEntry {
+  /** Epoch milliseconds, when the run finished. */
+  at: number;
+  source: TriggerSource;
+  action: AutomationAction;
+  succeeded: boolean;
+  freedBytes: number;
+  itemCount: number;
+  failedCount: number;
+  durationMs: number;
+  /** Failure reasons, or the platform's own summary. */
+  message: string;
 }

@@ -1,6 +1,6 @@
 [package]
 name = "windle"
-version = "0.7.0"
+version = "0.8.0"
 description = "Windle — system maintenance toolkit for macOS and Windows"
 license = "MIT"
 authors = ["Windle"]
@@ -56,6 +56,11 @@ windows = { version = "0.61", features = [
 winreg = "0.55"
 trash = "5"
 tauri-plugin-single-instance = "2"
+
+# `localtime_r` for the automation scheduler: std cannot ask for the local
+# calendar time the user configured their schedule in.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 codegen-units = 1

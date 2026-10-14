@@ -2,6 +2,7 @@ import { useEffect, type ComponentType } from "react";
 import { Layout } from "@/components/layout/Layout";
 import {
   AIAgentCleanup,
+  Automation,
   Dashboard,
   DeepClean,
   DiskAnalyzer,
@@ -28,6 +29,7 @@ const MODULE_VIEWS: Record<ModuleId, ComponentType> = {
   installer: InstallerCleanup,
   agent: AIAgentCleanup,
   docker: DockerCleanup,
+  automation: Automation,
 };
 
 export default function App() {
